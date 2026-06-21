@@ -11,6 +11,18 @@ type ApiAnalyzeResponse = AnalyzeResponse & {
   warning?: string;
 };
 
+type ProgressState = {
+  value: number;
+  label: string;
+  detail: string;
+};
+
+const idleProgress: ProgressState = {
+  value: 0,
+  label: "Ready",
+  detail: "Paste a YouTube URL to start analysis."
+};
+
 export default function Home() {
   const [url, setUrl] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -18,6 +30,7 @@ export default function Home() {
   const [result, setResult] = useState<ApiAnalyzeResponse | null>(null);
   const [activeClipId, setActiveClipId] = useState<string | null>(null);
   const [editableClips, setEditableClips] = useState<ClipCandidate[]>([]);
+  const [progress, setProgress] = useState<ProgressState>(idleProgress);
 
   const activeClip = editableClips.find((clip) => clip.id === activeClipId) ?? editableClips[0];
   const videoId = result?.video.videoId ?? extractYouTubeVideoId(url);
@@ -38,6 +51,43 @@ export default function Home() {
     setResult(null);
     setEditableClips([]);
     setActiveClipId(null);
+    setProgress({
+      value: 8,
+      label: "Preparing analysis",
+      detail: "Validating the YouTube URL and loading video metadata."
+    });
+
+    const progressTimers = [
+      window.setTimeout(() => {
+        setProgress({
+          value: 24,
+          label: "Looking for captions",
+          detail: "Trying public YouTube captions first because transcript analysis is faster."
+        });
+      }, 900),
+      window.setTimeout(() => {
+        setProgress({
+          value: 42,
+          label: "Preparing Gemini input",
+          detail:
+            "If captions are missing or empty, the app falls back to Gemini direct video analysis."
+        });
+      }, 2600),
+      window.setTimeout(() => {
+        setProgress({
+          value: 68,
+          label: "Analyzing with Gemini",
+          detail: "Finding 30-60 second moments, hooks, subtitles, scores, and post metadata."
+        });
+      }, 5200),
+      window.setTimeout(() => {
+        setProgress({
+          value: 84,
+          label: "Building clip candidates",
+          detail: "Structuring the results for review and editing."
+        });
+      }, 12000)
+    ];
 
     try {
       const response = await fetch("/api/analyze", {
@@ -55,12 +105,23 @@ export default function Home() {
       }
 
       const analysis = payload as ApiAnalyzeResponse;
+      setProgress({
+        value: 100,
+        label: "Analysis complete",
+        detail: `${analysis.clips.length} clip candidates are ready for review.`
+      });
       setResult(analysis);
       setEditableClips(analysis.clips);
       setActiveClipId(analysis.clips[0]?.id ?? null);
     } catch (caught) {
+      setProgress({
+        value: 100,
+        label: "Analysis failed",
+        detail: "Check the error message and try another URL if needed."
+      });
       setError(caught instanceof Error ? caught.message : "Analysis failed.");
     } finally {
+      progressTimers.forEach(window.clearTimeout);
       setIsLoading(false);
     }
   }
@@ -97,6 +158,12 @@ export default function Home() {
     URL.revokeObjectURL(downloadUrl);
   }
 
+  function downloadMp4Placeholder() {
+    setError(
+      "MP4 export is not implemented yet. The current POC creates clip plans only; final MP4 download needs a rendering worker with FFmpeg and access to the source video."
+    );
+  }
+
   return (
     <main className="page">
       <div className="shell">
@@ -125,6 +192,18 @@ export default function Home() {
             This POC uses public YouTube captions when available. It does not download the
             source video or render final MP4 files yet.
           </p>
+          {(isLoading || result || error) && (
+            <div className="progress-panel" aria-live="polite">
+              <div className="progress-topline">
+                <strong>{progress.label}</strong>
+                <span>{progress.value}%</span>
+              </div>
+              <div className="progress-track" aria-label="Analysis progress">
+                <div className="progress-fill" style={{ width: `${progress.value}%` }} />
+              </div>
+              <p>{progress.detail}</p>
+            </div>
+          )}
           {error ? <div className="error">{error}</div> : null}
         </section>
 
@@ -239,6 +318,13 @@ export default function Home() {
                     <p>{clip.hashtags.join(" ")}</p>
 
                     <div className="clip-actions">
+                      <button
+                        className="clip-button secondary-button"
+                        onClick={downloadMp4Placeholder}
+                        type="button"
+                      >
+                        MP4 unavailable
+                      </button>
                       <button
                         className="clip-button secondary-button"
                         onClick={() => setActiveClipId(clip.id)}
