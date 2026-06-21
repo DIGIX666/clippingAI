@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { ZodError } from "zod";
 import { analyzeTranscript, analyzeYouTubeUrl } from "@/lib/ai";
 import {
   compactTranscript,
@@ -62,7 +63,12 @@ export async function POST(request: Request) {
       });
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unexpected analysis error.";
+    const message =
+      error instanceof ZodError
+        ? "Gemini returned incomplete clip data. Please retry the analysis."
+        : error instanceof Error
+          ? error.message
+          : "Unexpected analysis error.";
     console.error("[api/analyze]", message);
     return NextResponse.json({ error: message }, { status: 500 });
   }

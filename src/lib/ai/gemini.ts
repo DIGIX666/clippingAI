@@ -1,5 +1,10 @@
 import { buildClipAnalysisPrompt, buildYouTubeVideoAnalysisPrompt } from "@/lib/ai/prompts";
-import { analyzeResponseSchema, type AnalyzeResponse, type VideoMetadata } from "@/lib/types";
+import {
+  analyzeResponseSchema,
+  type AnalyzeResponse,
+  type ClipCandidate,
+  type VideoMetadata
+} from "@/lib/types";
 
 type GeminiResponse = {
   candidates?: Array<{
@@ -87,10 +92,46 @@ async function callGemini(params: {
   }
 
   const parsed = JSON.parse(text) as unknown;
-  const clipsOnly = analyzeResponseSchema.shape.clips.parse((parsed as { clips?: unknown }).clips);
+  const clipsOnly = analyzeResponseSchema.shape.clips.parse(normalizeGeminiClips(parsed));
 
   return analyzeResponseSchema.parse({
     video: params.video,
     clips: clipsOnly
+  });
+}
+
+function normalizeGeminiClips(parsed: unknown): ClipCandidate[] {
+  const clips = (parsed as { clips?: unknown }).clips;
+
+  if (!Array.isArray(clips)) {
+    throw new Error("Gemini returned JSON without a clips array.");
+  }
+
+  return clips.map((clip, index) => {
+    const value = clip as Partial<ClipCandidate>;
+    const startTime = Number(value.startTime ?? 0);
+    const endTime = Number(value.endTime ?? startTime + 45);
+    const title = String(value.title ?? `Clip ${index + 1}`);
+    const hook = String(value.hook ?? title);
+    const subtitles = String(value.subtitles ?? value.description ?? hook);
+    const description = String(value.description ?? value.reason ?? hook);
+    const reason = String(value.reason ?? "Gemini selected this moment as a candidate clip.");
+    const hashtags = Array.isArray(value.hashtags) ? value.hashtags : [];
+
+    return {
+      id: String(value.id ?? `clip-${index + 1}`),
+      startTime,
+      endTime,
+      hook,
+      subtitles,
+      reason,
+      score: Number(value.score ?? 75),
+      title,
+      description,
+      hashtags: hashtags
+        .filter((hashtag): hashtag is string => typeof hashtag === "string")
+        .map((hashtag) => (hashtag.startsWith("#") ? hashtag : `#${hashtag}`))
+        .slice(0, 12)
+    };
   });
 }
