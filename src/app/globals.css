@@ -184,6 +184,22 @@ a {
   margin: 0;
 }
 
+.render-progress {
+  background: #f8fbfa;
+  border: 1px solid #cfe1dd;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.render-progress p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 0;
+}
+
 .workspace {
   display: grid;
   gap: 18px;

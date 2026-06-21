@@ -17,6 +17,10 @@ type ProgressState = {
   detail: string;
 };
 
+type RenderProgressState = ProgressState & {
+  clipId: string;
+};
+
 const idleProgress: ProgressState = {
   value: 0,
   label: "Ready",
@@ -31,7 +35,7 @@ export default function Home() {
   const [activeClipId, setActiveClipId] = useState<string | null>(null);
   const [editableClips, setEditableClips] = useState<ClipCandidate[]>([]);
   const [progress, setProgress] = useState<ProgressState>(idleProgress);
-  const [renderingClipId, setRenderingClipId] = useState<string | null>(null);
+  const [renderProgress, setRenderProgress] = useState<RenderProgressState | null>(null);
 
   const activeClip = editableClips.find((clip) => clip.id === activeClipId) ?? editableClips[0];
   const videoId = result?.video.videoId ?? extractYouTubeVideoId(url);
@@ -165,7 +169,39 @@ export default function Home() {
     }
 
     setError("");
-    setRenderingClipId(clip.id);
+    setRenderProgress({
+      clipId: clip.id,
+      value: 10,
+      label: "Preparing MP4 export",
+      detail: "Starting yt-dlp and FFmpeg for this clip."
+    });
+
+    const renderTimers = [
+      window.setTimeout(() => {
+        setRenderProgress({
+          clipId: clip.id,
+          value: 28,
+          label: "Downloading clip section",
+          detail: "Fetching only the selected YouTube section locally with yt-dlp."
+        });
+      }, 900),
+      window.setTimeout(() => {
+        setRenderProgress({
+          clipId: clip.id,
+          value: 54,
+          label: "Rendering vertical MP4",
+          detail: "FFmpeg is cutting the clip, fitting it to 1080x1920, and adding text overlays."
+        });
+      }, 4500),
+      window.setTimeout(() => {
+        setRenderProgress({
+          clipId: clip.id,
+          value: 78,
+          label: "Encoding MP4",
+          detail: "Finalizing video and audio for browser download."
+        });
+      }, 12000)
+    ];
 
     try {
       const response = await fetch("/api/export-mp4", {
@@ -185,16 +221,37 @@ export default function Home() {
       }
 
       const blob = await response.blob();
+      setRenderProgress({
+        clipId: clip.id,
+        value: 96,
+        label: "Preparing download",
+        detail: "The MP4 is ready; your browser will save it to its downloads folder."
+      });
       const downloadUrl = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = downloadUrl;
       link.download = `${result.video.videoId}-${clip.id}.mp4`;
       link.click();
       URL.revokeObjectURL(downloadUrl);
+      setRenderProgress({
+        clipId: clip.id,
+        value: 100,
+        label: "MP4 downloaded",
+        detail: "The clip was sent to your browser downloads folder."
+      });
     } catch (caught) {
+      setRenderProgress({
+        clipId: clip.id,
+        value: 100,
+        label: "MP4 export failed",
+        detail: "Check the error message above before retrying."
+      });
       setError(caught instanceof Error ? caught.message : "MP4 export failed.");
     } finally {
-      setRenderingClipId(null);
+      renderTimers.forEach(window.clearTimeout);
+      window.setTimeout(() => {
+        setRenderProgress((current) => (current?.clipId === clip.id ? null : current));
+      }, 4500);
     }
   }
 
@@ -348,17 +405,33 @@ export default function Home() {
                       />
                     </label>
 
-                    <p>{clip.reason}</p>
-                    <p>{clip.hashtags.join(" ")}</p>
+                  <p>{clip.reason}</p>
+                  <p>{clip.hashtags.join(" ")}</p>
+
+                    {renderProgress?.clipId === clip.id ? (
+                      <div className="render-progress" aria-live="polite">
+                        <div className="progress-topline">
+                          <strong>{renderProgress.label}</strong>
+                          <span>{renderProgress.value}%</span>
+                        </div>
+                        <div className="progress-track" aria-label="MP4 export progress">
+                          <div
+                            className="progress-fill"
+                            style={{ width: `${renderProgress.value}%` }}
+                          />
+                        </div>
+                        <p>{renderProgress.detail}</p>
+                      </div>
+                    ) : null}
 
                     <div className="clip-actions">
                       <button
                         className="clip-button secondary-button"
-                        disabled={renderingClipId !== null}
+                        disabled={renderProgress !== null}
                         onClick={() => downloadMp4(clip)}
                         type="button"
                       >
-                        {renderingClipId === clip.id ? "Rendering..." : "Download MP4"}
+                        {renderProgress?.clipId === clip.id ? "Rendering..." : "Download MP4"}
                       </button>
                       <button
                         className="clip-button secondary-button"

@@ -142,6 +142,10 @@ MP4 export uses the local `.venv/bin/yt-dlp` binary when present and `ffmpeg`
 from your system path. This is not production-ready for Vercel serverless; a
 real deployment should move rendering to a worker service.
 
+The generated MP4 is not saved in the repository or a database. The API returns
+the file directly to the browser, so it is saved wherever the browser normally
+puts downloads, usually the user's `Downloads` folder.
+
 Open:
 
 ```text
