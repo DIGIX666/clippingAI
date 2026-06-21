@@ -106,13 +106,13 @@ The repository now includes a minimal Vercel-ready Next.js POC.
 - Generate 5-8 candidate clips.
 - Edit hooks, subtitles, and titles in the browser.
 - Preview the selected timestamp in an embedded YouTube player.
+- Download a local MP4 export for each clip.
 - Export the clip plan as JSON.
 
 ### What Does Not Work Yet
 
-- It does not download YouTube videos.
-- It does not render final MP4 clips.
-- It does not burn subtitles into video.
+- MP4 export is local POC only.
+- MP4 export requires `ffmpeg` and `yt-dlp`.
 - It does not save projects in a database.
 - It does not publish to TikTok or Instagram.
 
@@ -121,6 +121,8 @@ The repository now includes a minimal Vercel-ready Next.js POC.
 ```bash
 npm install
 cp .env.example .env.local
+python3 -m venv .venv
+.venv/bin/pip install yt-dlp
 ```
 
 Add a Gemini API key:
@@ -135,6 +137,10 @@ Run locally:
 ```bash
 npm run dev
 ```
+
+MP4 export uses the local `.venv/bin/yt-dlp` binary when present and `ffmpeg`
+from your system path. This is not production-ready for Vercel serverless; a
+real deployment should move rendering to a worker service.
 
 Open:
 

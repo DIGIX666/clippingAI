@@ -1,0 +1,44 @@
+import { NextResponse } from "next/server";
+import { z } from "zod";
+import { renderClipToMp4 } from "@/lib/mp4";
+
+export const runtime = "nodejs";
+export const maxDuration = 300;
+
+const exportRequestSchema = z.object({
+  youtubeUrl: z.string().url(),
+  clip: z.object({
+    id: z.string(),
+    startTime: z.number().min(0),
+    endTime: z.number().min(0),
+    hook: z.string().min(1),
+    subtitles: z.string().min(1)
+  })
+});
+
+export async function POST(request: Request) {
+  try {
+    const body = exportRequestSchema.parse(await request.json());
+    const mp4 = await renderClipToMp4({
+      youtubeUrl: body.youtubeUrl,
+      startTime: body.clip.startTime,
+      endTime: body.clip.endTime,
+      hook: body.clip.hook,
+      subtitles: body.clip.subtitles
+    });
+
+    const bodyBuffer = new Uint8Array(mp4);
+
+    return new NextResponse(bodyBuffer, {
+      headers: {
+        "content-disposition": `attachment; filename="${body.clip.id}.mp4"`,
+        "content-length": String(mp4.length),
+        "content-type": "video/mp4"
+      }
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "MP4 export failed.";
+    console.error("[api/export-mp4]", message);
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}

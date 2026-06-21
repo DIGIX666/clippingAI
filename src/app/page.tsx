@@ -31,6 +31,7 @@ export default function Home() {
   const [activeClipId, setActiveClipId] = useState<string | null>(null);
   const [editableClips, setEditableClips] = useState<ClipCandidate[]>([]);
   const [progress, setProgress] = useState<ProgressState>(idleProgress);
+  const [renderingClipId, setRenderingClipId] = useState<string | null>(null);
 
   const activeClip = editableClips.find((clip) => clip.id === activeClipId) ?? editableClips[0];
   const videoId = result?.video.videoId ?? extractYouTubeVideoId(url);
@@ -158,10 +159,43 @@ export default function Home() {
     URL.revokeObjectURL(downloadUrl);
   }
 
-  function downloadMp4Placeholder() {
-    setError(
-      "MP4 export is not implemented yet. The current POC creates clip plans only; final MP4 download needs a rendering worker with FFmpeg and access to the source video."
-    );
+  async function downloadMp4(clip: ClipCandidate) {
+    if (!result) {
+      return;
+    }
+
+    setError("");
+    setRenderingClipId(clip.id);
+
+    try {
+      const response = await fetch("/api/export-mp4", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          youtubeUrl: `https://www.youtube.com/watch?v=${result.video.videoId}`,
+          clip
+        })
+      });
+
+      if (!response.ok) {
+        const payload = (await response.json()) as { error?: string };
+        throw new Error(payload.error ?? "MP4 export failed.");
+      }
+
+      const blob = await response.blob();
+      const downloadUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = downloadUrl;
+      link.download = `${result.video.videoId}-${clip.id}.mp4`;
+      link.click();
+      URL.revokeObjectURL(downloadUrl);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "MP4 export failed.");
+    } finally {
+      setRenderingClipId(null);
+    }
   }
 
   return (
@@ -189,8 +223,8 @@ export default function Home() {
             </button>
           </form>
           <p className="input-note">
-            This POC uses public YouTube captions when available. It does not download the
-            source video or render final MP4 files yet.
+            This POC uses public YouTube captions when available, then falls back to Gemini video
+            analysis. MP4 export is local-only and uses FFmpeg.
           </p>
           {(isLoading || result || error) && (
             <div className="progress-panel" aria-live="polite">
@@ -320,10 +354,11 @@ export default function Home() {
                     <div className="clip-actions">
                       <button
                         className="clip-button secondary-button"
-                        onClick={downloadMp4Placeholder}
+                        disabled={renderingClipId !== null}
+                        onClick={() => downloadMp4(clip)}
                         type="button"
                       >
-                        MP4 unavailable
+                        {renderingClipId === clip.id ? "Rendering..." : "Download MP4"}
                       </button>
                       <button
                         className="clip-button secondary-button"
