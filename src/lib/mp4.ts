@@ -62,19 +62,33 @@ async function downloadSourceVideo(
 ): Promise<void> {
   const ytDlpPath = await resolveYtDlpPath();
 
-  await runProcess(ytDlpPath, [
-    "--no-playlist",
-    "--format",
-    "bv*[height<=720][ext=mp4]+ba[ext=m4a]/b[height<=720][ext=mp4]/b[ext=mp4]/b",
-    "--merge-output-format",
-    "mp4",
-    "--download-sections",
-    `*${Math.max(0, startTime)}-${Math.max(startTime + 1, endTime)}`,
-    "--force-keyframes-at-cuts",
-    "--output",
-    outputPath,
-    youtubeUrl
-  ]);
+  try {
+    await runProcess(ytDlpPath, [
+      "--no-playlist",
+      "--js-runtimes",
+      `node:${process.execPath}`,
+      "--format",
+      "bv*[height<=720][ext=mp4]+ba[ext=m4a]/b[height<=720][ext=mp4]/b[ext=mp4]/b",
+      "--merge-output-format",
+      "mp4",
+      "--download-sections",
+      `*${Math.max(0, startTime)}-${Math.max(startTime + 1, endTime)}`,
+      "--force-keyframes-at-cuts",
+      "--output",
+      outputPath,
+      youtubeUrl
+    ]);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+
+    if (message.includes("Sign in to confirm") || message.includes("not a bot")) {
+      throw new Error(
+        "YouTube blocked the local video download for this URL. Try another video, or later we need to add authenticated cookies / user-owned uploads for reliable MP4 rendering."
+      );
+    }
+
+    throw error;
+  }
 }
 
 async function resolveYtDlpPath(): Promise<string> {
@@ -116,7 +130,7 @@ function runProcess(command: string, args: string[]): Promise<void> {
 function createAssCaptions(hook: string, subtitles: string, duration: number): string {
   const end = formatAssTime(duration);
   const safeHook = escapeAssText(hook).slice(0, 220);
-  const safeSubtitles = wrapText(escapeAssText(subtitles), 56).slice(0, 900);
+  const captionEvents = createWordByWordCaptionEvents(subtitles, duration);
 
   return `[Script Info]
 ScriptType: v4.00+
@@ -132,8 +146,45 @@ Style: Caption,Arial,58,&H00FFFFFF,&H000000FF,&H00000000,&HAA000000,1,0,0,0,100,
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 Dialogue: 0,0:00:00.00,${end},Hook,,0,0,0,,${safeHook}
-Dialogue: 0,0:00:00.00,${end},Caption,,0,0,0,,${safeSubtitles}
+${captionEvents}
 `;
+}
+
+function createWordByWordCaptionEvents(subtitles: string, duration: number): string {
+  const words = escapeAssText(subtitles)
+    .split(" ")
+    .map((word) => word.trim())
+    .filter(Boolean)
+    .slice(0, 160);
+
+  if (words.length === 0) {
+    return "";
+  }
+
+  const wordDuration = Math.max(0.22, duration / words.length);
+
+  return words
+    .map((_, index) => {
+      const start = Math.min(duration, index * wordDuration);
+      const end = Math.min(duration, Math.max(start + 0.2, (index + 1) * wordDuration));
+      const text = buildCaptionWindow(words, index);
+      return `Dialogue: 0,${formatAssTime(start)},${formatAssTime(end)},Caption,,0,0,0,,${text}`;
+    })
+    .join("\n");
+}
+
+function buildCaptionWindow(words: string[], activeIndex: number): string {
+  const wordsPerLine = 5;
+  const maxVisibleWords = 10;
+  const windowStart = Math.max(0, activeIndex - maxVisibleWords + 1);
+  const visibleWords = words.slice(windowStart, activeIndex + 1);
+  const lines: string[] = [];
+
+  for (let index = 0; index < visibleWords.length; index += wordsPerLine) {
+    lines.push(visibleWords.slice(index, index + wordsPerLine).join(" "));
+  }
+
+  return lines.slice(-2).join("\\N");
 }
 
 function formatAssTime(seconds: number): string {
@@ -150,27 +201,6 @@ function formatAssTime(seconds: number): string {
 
 function escapeAssText(value: string): string {
   return value.replace(/[{}]/g, "").replace(/\r?\n/g, " ").replace(/\s+/g, " ").trim();
-}
-
-function wrapText(value: string, lineLength: number): string {
-  const words = value.split(" ");
-  const lines: string[] = [];
-  let current = "";
-
-  for (const word of words) {
-    if (`${current} ${word}`.trim().length > lineLength) {
-      lines.push(current);
-      current = word;
-    } else {
-      current = `${current} ${word}`.trim();
-    }
-  }
-
-  if (current) {
-    lines.push(current);
-  }
-
-  return lines.slice(0, 5).join("\\N");
 }
 
 function escapeFilterPath(path: string): string {

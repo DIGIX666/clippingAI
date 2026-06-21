@@ -190,7 +190,8 @@ export default function Home() {
           clipId: clip.id,
           value: 54,
           label: "Rendering vertical MP4",
-          detail: "FFmpeg is cutting the clip, fitting it to 1080x1920, and adding text overlays."
+          detail:
+            "FFmpeg is cutting the clip, fitting it to 1080x1920, and adding word-by-word captions."
         });
       }, 4500),
       window.setTimeout(() => {
@@ -281,7 +282,7 @@ export default function Home() {
           </form>
           <p className="input-note">
             This POC uses public YouTube captions when available, then falls back to Gemini video
-            analysis. MP4 export is local-only and uses FFmpeg.
+            analysis. MP4 export is local-only and uses FFmpeg with word-by-word captions.
           </p>
           {(isLoading || result || error) && (
             <div className="progress-panel" aria-live="polite">
