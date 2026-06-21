@@ -94,7 +94,59 @@ clippingAI/
     PRODUCT_REVIEW.md
 ```
 
-Application code can be added after the architecture is validated.
+## Local POC
+
+The repository now includes a minimal Vercel-ready Next.js POC.
+
+### What Works
+
+- Paste a YouTube URL.
+- Fetch public YouTube captions when available.
+- Send the transcript to Gemini.
+- Generate 5-8 candidate clips.
+- Edit hooks, subtitles, and titles in the browser.
+- Preview the selected timestamp in an embedded YouTube player.
+- Export the clip plan as JSON.
+
+### What Does Not Work Yet
+
+- It does not download YouTube videos.
+- It does not render final MP4 clips.
+- It does not burn subtitles into video.
+- It does not save projects in a database.
+- It does not publish to TikTok or Instagram.
+
+### Setup
+
+```bash
+npm install
+cp .env.example .env.local
+```
+
+Add a Gemini API key:
+
+```env
+AI_PROVIDER=gemini
+GEMINI_API_KEY=your_gemini_key
+```
+
+Run locally:
+
+```bash
+npm run dev
+```
+
+Open:
+
+```text
+http://localhost:3000
+```
+
+### AI Provider Notes
+
+Gemini is the active provider for the POC because it has a usable free tier for tests. An OpenAI provider stub is kept in `src/lib/ai/openai.example.ts` for later, when OpenAI API credits are available.
+
+Application code should stay behind the `analyzeTranscript` provider interface so Gemini, OpenAI, Groq, or OpenRouter can be swapped without rewriting the product flow.
 
 ## Important Platform Constraints
 
