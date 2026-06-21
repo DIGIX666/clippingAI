@@ -71,6 +71,34 @@ export async function fetchYouTubeTranscript(videoId: string): Promise<{
   metadata: VideoMetadata;
   transcript: TranscriptSegment[];
 }> {
+  const { metadata, captionTracks } = await fetchYouTubeMetadataAndCaptions(videoId);
+
+  if (captionTracks.length === 0) {
+    throw new Error(
+      "No public transcript was found for this video. Try another video with captions enabled."
+    );
+  }
+
+  const transcript = await fetchFirstReadableCaptionTrack(captionTracks);
+
+  if (transcript.length === 0) {
+    throw new Error(
+      "Caption tracks were found, but none contained readable transcript text. This often happens with music videos, premieres, or videos without real captions."
+    );
+  }
+
+  return { metadata, transcript };
+}
+
+export async function fetchYouTubeMetadata(videoId: string): Promise<VideoMetadata> {
+  const { metadata } = await fetchYouTubeMetadataAndCaptions(videoId);
+  return metadata;
+}
+
+async function fetchYouTubeMetadataAndCaptions(videoId: string): Promise<{
+  metadata: VideoMetadata;
+  captionTracks: CaptionTrack[];
+}> {
   const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
   const response = await fetch(watchUrl, {
     headers: {
@@ -91,20 +119,7 @@ export async function fetchYouTubeTranscript(videoId: string): Promise<{
   const captionTracks =
     playerResponse.captions?.playerCaptionsTracklistRenderer?.captionTracks ?? [];
 
-  if (captionTracks.length === 0) {
-    throw new Error(
-      "No public transcript was found for this video. Try another video with captions enabled."
-    );
-  }
-
-  const track = chooseCaptionTrack(captionTracks);
-  const transcript = await fetchCaptionTrack(track.baseUrl);
-
-  if (transcript.length === 0) {
-    throw new Error("The transcript track was found, but no readable text was returned.");
-  }
-
-  return { metadata, transcript };
+  return { metadata, captionTracks };
 }
 
 function parsePlayerResponse(html: string): PlayerResponse {
@@ -171,21 +186,72 @@ function extractMetadata(videoId: string, playerResponse: PlayerResponse): Video
   };
 }
 
-function chooseCaptionTrack(tracks: CaptionTrack[]): CaptionTrack {
+function orderCaptionTracks(tracks: CaptionTrack[]): CaptionTrack[] {
   const manualTracks = tracks.filter((track) => track.kind !== "asr");
   const candidates = manualTracks.length > 0 ? manualTracks : tracks;
-  const preferred =
-    candidates.find((track) => track.languageCode?.startsWith("en")) ??
-    candidates.find((track) => track.languageCode?.startsWith("fr")) ??
-    candidates[0];
+  const english = candidates.filter((track) => track.languageCode?.startsWith("en"));
+  const french = candidates.filter((track) => track.languageCode?.startsWith("fr"));
+  const remaining = candidates.filter(
+    (track) => !track.languageCode?.startsWith("en") && !track.languageCode?.startsWith("fr")
+  );
 
-  return preferred;
+  return [...english, ...french, ...remaining];
+}
+
+async function fetchFirstReadableCaptionTrack(
+  tracks: CaptionTrack[]
+): Promise<TranscriptSegment[]> {
+  const orderedTracks = orderCaptionTracks(tracks);
+
+  for (const track of orderedTracks) {
+    try {
+      const transcript = await fetchCaptionTrack(track.baseUrl);
+
+      if (transcript.length > 0) {
+        return transcript;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return [];
 }
 
 async function fetchCaptionTrack(baseUrl: string): Promise<TranscriptSegment[]> {
-  const url = new URL(baseUrl);
-  url.searchParams.set("fmt", "json3");
+  const jsonUrl = new URL(baseUrl);
+  jsonUrl.searchParams.set("fmt", "json3");
+  const jsonBody = await fetchCaptionText(jsonUrl);
 
+  if (jsonBody.trim()) {
+    try {
+      const payload = JSON.parse(jsonBody) as Json3Transcript;
+      const transcript = parseJson3Transcript(payload);
+
+      if (transcript.length > 0) {
+        return transcript;
+      }
+    } catch {
+      // Fall through to XML/VTT formats.
+    }
+  }
+
+  const xmlUrl = new URL(baseUrl);
+  xmlUrl.searchParams.delete("fmt");
+  const xmlBody = await fetchCaptionText(xmlUrl);
+  const xmlTranscript = parseXmlTranscript(xmlBody);
+
+  if (xmlTranscript.length > 0) {
+    return xmlTranscript;
+  }
+
+  const vttUrl = new URL(baseUrl);
+  vttUrl.searchParams.set("fmt", "vtt");
+  const vttBody = await fetchCaptionText(vttUrl);
+  return parseVttTranscript(vttBody);
+}
+
+async function fetchCaptionText(url: URL): Promise<string> {
   const response = await fetch(url.toString(), {
     headers: {
       "user-agent":
@@ -198,8 +264,10 @@ async function fetchCaptionTrack(baseUrl: string): Promise<TranscriptSegment[]> 
     throw new Error("Could not fetch the YouTube transcript track.");
   }
 
-  const payload = (await response.json()) as Json3Transcript;
+  return response.text();
+}
 
+function parseJson3Transcript(payload: Json3Transcript): TranscriptSegment[] {
   return (payload.events ?? [])
     .map((event) => {
       const text = (event.segs ?? [])
@@ -215,6 +283,88 @@ async function fetchCaptionTrack(baseUrl: string): Promise<TranscriptSegment[]> 
       };
     })
     .filter((segment) => segment.text.length > 0);
+}
+
+function parseXmlTranscript(xml: string): TranscriptSegment[] {
+  const textMatches = xml.matchAll(/<text\b([^>]*)>([\s\S]*?)<\/text>/g);
+  const segments: TranscriptSegment[] = [];
+
+  for (const match of textMatches) {
+    const attributes = match[1];
+    const rawText = match[2];
+    const start = Number(readXmlAttribute(attributes, "start") ?? 0);
+    const duration = Number(readXmlAttribute(attributes, "dur") ?? 0);
+    const text = decodeHtml(rawText).replace(/\s+/g, " ").trim();
+
+    if (text) {
+      segments.push({ start, duration, text });
+    }
+  }
+
+  return segments;
+}
+
+function parseVttTranscript(vtt: string): TranscriptSegment[] {
+  const blocks = vtt.split(/\n\n+/);
+  const segments: TranscriptSegment[] = [];
+
+  for (const block of blocks) {
+    const lines = block
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const timingLine = lines.find((line) => line.includes("-->"));
+
+    if (!timingLine) {
+      continue;
+    }
+
+    const [startRaw, endRaw] = timingLine.split("-->").map((value) => value.trim());
+    const text = lines
+      .slice(lines.indexOf(timingLine) + 1)
+      .join(" ")
+      .replace(/<[^>]+>/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (text) {
+      const start = parseVttTimestamp(startRaw);
+      const end = parseVttTimestamp(endRaw);
+      segments.push({ start, duration: Math.max(0, end - start), text });
+    }
+  }
+
+  return segments;
+}
+
+function readXmlAttribute(attributes: string, name: string): string | null {
+  const match = attributes.match(new RegExp(`${name}="([^"]*)"`, "i"));
+  return match?.[1] ?? null;
+}
+
+function decodeHtml(value: string): string {
+  return value
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&#(\d+);/g, (_, code: string) => String.fromCharCode(Number(code)));
+}
+
+function parseVttTimestamp(value: string): number {
+  const clean = value.split(" ")[0];
+  const parts = clean.split(":").map(Number);
+
+  if (parts.length === 3) {
+    return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  }
+
+  if (parts.length === 2) {
+    return parts[0] * 60 + parts[1];
+  }
+
+  return Number(clean) || 0;
 }
 
 export function compactTranscript(transcript: TranscriptSegment[], maxCharacters = 28000): string {

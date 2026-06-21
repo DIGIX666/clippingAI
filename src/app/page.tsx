@@ -5,8 +5,10 @@ import type { AnalyzeResponse, ClipCandidate, TranscriptSegment } from "@/lib/ty
 import { extractYouTubeVideoId, formatTimestamp } from "@/lib/youtube";
 
 type ApiAnalyzeResponse = AnalyzeResponse & {
+  analysisMode?: "transcript" | "youtube-video";
   transcriptPreview?: TranscriptSegment[];
   transcriptSegmentCount?: number;
+  warning?: string;
 };
 
 export default function Home() {
@@ -159,18 +161,23 @@ export default function Home() {
                   <h3>{result.video.title}</h3>
                   <p>
                     {result.video.author ? `${result.video.author} · ` : ""}
-                    {result.transcriptSegmentCount ?? 0} transcript segments found
+                    {result.analysisMode === "youtube-video"
+                      ? "Gemini direct video analysis"
+                      : `${result.transcriptSegmentCount ?? 0} transcript segments found`}
                   </p>
+                  {result.warning ? <p>{result.warning}</p> : null}
                 </div>
-                <div className="transcript-preview">
-                  <h3>Transcript sample</h3>
-                  <p>
-                    {(result.transcriptPreview ?? [])
-                      .map((segment) => segment.text)
-                      .join(" ")
-                      .slice(0, 420)}
-                  </p>
-                </div>
+                {result.analysisMode === "transcript" ? (
+                  <div className="transcript-preview">
+                    <h3>Transcript sample</h3>
+                    <p>
+                      {(result.transcriptPreview ?? [])
+                        .map((segment) => segment.text)
+                        .join(" ")
+                        .slice(0, 420)}
+                    </p>
+                  </div>
+                ) : null}
               </>
             ) : null}
           </div>

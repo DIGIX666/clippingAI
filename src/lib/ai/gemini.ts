@@ -1,4 +1,4 @@
-import { buildClipAnalysisPrompt } from "@/lib/ai/prompts";
+import { buildClipAnalysisPrompt, buildYouTubeVideoAnalysisPrompt } from "@/lib/ai/prompts";
 import { analyzeResponseSchema, type AnalyzeResponse, type VideoMetadata } from "@/lib/types";
 
 type GeminiResponse = {
@@ -15,15 +15,44 @@ export async function analyzeWithGemini(params: {
   video: VideoMetadata;
   transcript: string;
 }): Promise<AnalyzeResponse> {
+  return callGemini({
+    video: params.video,
+    parts: [{ text: buildClipAnalysisPrompt(params.video, params.transcript) }],
+    model: process.env.GEMINI_MODEL ?? "gemini-3.1-flash-lite"
+  });
+}
+
+export async function analyzeYouTubeUrlWithGemini(params: {
+  video: VideoMetadata;
+  youtubeUrl: string;
+}): Promise<AnalyzeResponse> {
+  return callGemini({
+    video: params.video,
+    parts: [
+      {
+        file_data: {
+          file_uri: params.youtubeUrl,
+          mime_type: "video/*"
+        }
+      },
+      { text: buildYouTubeVideoAnalysisPrompt(params.video) }
+    ],
+    model: process.env.GEMINI_VIDEO_MODEL ?? "gemini-2.5-flash"
+  });
+}
+
+async function callGemini(params: {
+  video: VideoMetadata;
+  parts: Array<{ text: string } | { file_data: { file_uri: string; mime_type?: string } }>;
+  model: string;
+}): Promise<AnalyzeResponse> {
   const apiKey = process.env.GEMINI_API_KEY;
 
   if (!apiKey) {
     throw new Error("Missing GEMINI_API_KEY. Add it to .env.local before testing.");
   }
 
-  const model = process.env.GEMINI_MODEL ?? "gemini-3.1-flash-lite";
-  const prompt = buildClipAnalysisPrompt(params.video, params.transcript);
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${params.model}:generateContent?key=${apiKey}`;
 
   const response = await fetch(endpoint, {
     method: "POST",
@@ -34,12 +63,13 @@ export async function analyzeWithGemini(params: {
       contents: [
         {
           role: "user",
-          parts: [{ text: prompt }]
+          parts: params.parts
         }
       ],
-      generationConfig: {
+      generation_config: {
         temperature: 0.45,
-        responseMimeType: "application/json"
+        response_mime_type: "application/json",
+        media_resolution: "MEDIA_RESOLUTION_LOW"
       }
     })
   });
