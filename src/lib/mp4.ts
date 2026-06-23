@@ -11,16 +11,39 @@ type RenderClipInput = {
   subtitles: string;
 };
 
+type WhisperWord = {
+  start: number;
+  end: number;
+  word: string;
+};
+
+type WhisperJson = {
+  segments?: Array<{
+    words?: Array<{
+      start?: number;
+      end?: number;
+      word?: string;
+    }>;
+  }>;
+};
+
 export async function renderClipToMp4(input: RenderClipInput): Promise<Buffer> {
   const duration = Math.max(1, Math.min(120, input.endTime - input.startTime));
   const tempDir = await mkdtemp(join(tmpdir(), "clippingai-"));
   const assPath = join(tempDir, "captions.ass");
+  const audioPath = join(tempDir, "audio.wav");
   const sourcePath = join(tempDir, "source.mp4");
   const outputPath = join(tempDir, "clip.mp4");
 
   try {
     await downloadSourceVideo(input.youtubeUrl, sourcePath, input.startTime, input.endTime);
-    await writeFile(assPath, createAssCaptions(input.hook, input.subtitles, duration), "utf8");
+    await extractAudioForTranscription(sourcePath, audioPath);
+    const timedWords = await transcribeWords(audioPath, tempDir);
+    await writeFile(
+      assPath,
+      createAssCaptions(input.hook, input.subtitles, duration, timedWords),
+      "utf8"
+    );
 
     await runFfmpeg([
       "-hide_banner",
@@ -51,6 +74,62 @@ export async function renderClipToMp4(input: RenderClipInput): Promise<Buffer> {
     return await readFile(outputPath);
   } finally {
     await rm(tempDir, { force: true, recursive: true });
+  }
+}
+
+async function extractAudioForTranscription(sourcePath: string, audioPath: string): Promise<void> {
+  await runFfmpeg([
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-i",
+    sourcePath,
+    "-vn",
+    "-ac",
+    "1",
+    "-ar",
+    "16000",
+    "-y",
+    audioPath
+  ]);
+}
+
+async function transcribeWords(audioPath: string, outputDir: string): Promise<WhisperWord[]> {
+  try {
+    await runProcess("whisper", [
+      audioPath,
+      "--model",
+      process.env.WHISPER_MODEL ?? "base",
+      "--task",
+      "transcribe",
+      "--word_timestamps",
+      "True",
+      "--output_format",
+      "json",
+      "--output_dir",
+      outputDir,
+      "--verbose",
+      "False"
+    ]);
+
+    const transcriptPath = join(outputDir, "audio.json");
+    const payload = JSON.parse(await readFile(transcriptPath, "utf8")) as WhisperJson;
+
+    return (payload.segments ?? [])
+      .flatMap((segment) => segment.words ?? [])
+      .map((word) => ({
+        start: Number(word.start ?? 0),
+        end: Number(word.end ?? word.start ?? 0),
+        word: String(word.word ?? "").trim()
+      }))
+      .filter((word) => word.word.length > 0 && word.end >= word.start)
+      .slice(0, 220);
+  } catch (error) {
+    console.warn(
+      "[mp4] Whisper transcription failed, falling back to estimated subtitles:",
+      error instanceof Error ? error.message : error
+    );
+    return [];
   }
 }
 
@@ -127,10 +206,18 @@ function runProcess(command: string, args: string[]): Promise<void> {
   });
 }
 
-function createAssCaptions(hook: string, subtitles: string, duration: number): string {
+function createAssCaptions(
+  hook: string,
+  subtitles: string,
+  duration: number,
+  timedWords: WhisperWord[]
+): string {
   const end = formatAssTime(duration);
   const safeHook = escapeAssText(hook).slice(0, 220);
-  const captionEvents = createWordByWordCaptionEvents(subtitles, duration);
+  const captionEvents =
+    timedWords.length > 0
+      ? createTimedWordCaptionEvents(timedWords, duration)
+      : createEstimatedWordCaptionEvents(subtitles, duration);
 
   return `[Script Info]
 ScriptType: v4.00+
@@ -150,7 +237,25 @@ ${captionEvents}
 `;
 }
 
-function createWordByWordCaptionEvents(subtitles: string, duration: number): string {
+function createTimedWordCaptionEvents(words: WhisperWord[], duration: number): string {
+  return words
+    .map((word, index) => {
+      const start = Math.min(duration, Math.max(0, word.start));
+      const nextStart = words[index + 1]?.start;
+      const end = Math.min(
+        duration,
+        Math.max(word.end, typeof nextStart === "number" ? nextStart : word.end + 0.35)
+      );
+      const text = buildCaptionWindow(
+        words.map((item) => escapeAssText(item.word)),
+        index
+      );
+      return `Dialogue: 0,${formatAssTime(start)},${formatAssTime(end)},Caption,,0,0,0,,${text}`;
+    })
+    .join("\n");
+}
+
+function createEstimatedWordCaptionEvents(subtitles: string, duration: number): string {
   const words = escapeAssText(subtitles)
     .split(" ")
     .map((word) => word.trim())

@@ -107,6 +107,7 @@ The repository now includes a minimal Vercel-ready Next.js POC.
 - Edit hooks, subtitles, and titles in the browser.
 - Preview the selected timestamp in an embedded YouTube player.
 - Download a local MP4 export for each clip.
+- Transcribe the selected clip audio with Whisper for spoken subtitles.
 - Burn progressive word-by-word captions into local MP4 exports.
 - Export the clip plan as JSON.
 
@@ -139,17 +140,18 @@ Run locally:
 npm run dev
 ```
 
-MP4 export uses the local `.venv/bin/yt-dlp` binary when present and `ffmpeg`
-from your system path. This is not production-ready for Vercel serverless; a
-real deployment should move rendering to a worker service.
+MP4 export uses the local `.venv/bin/yt-dlp` binary when present, `whisper` for
+automatic speech transcription, and `ffmpeg` from your system path. This is not
+production-ready for Vercel serverless; a real deployment should move rendering
+to a worker service.
 
 The generated MP4 is not saved in the repository or a database. The API returns
 the file directly to the browser, so it is saved wherever the browser normally
 puts downloads, usually the user's `Downloads` folder.
 
-Word-by-word captions are estimated from the generated subtitle text and the
-clip duration. True speech-synced word timing should later use word-level
-timestamps from a transcription engine such as Whisper.
+Word-by-word captions use Whisper word timestamps when speech is detected in the
+clip. If Whisper fails or finds no words, the renderer falls back to estimated
+timing from the generated subtitle text and clip duration.
 
 Some YouTube URLs may block local MP4 export with a bot/authentication check.
 For a reliable production flow, add one of these ingestion paths:

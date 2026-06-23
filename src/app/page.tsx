@@ -188,20 +188,28 @@ export default function Home() {
       window.setTimeout(() => {
         setRenderProgress({
           clipId: clip.id,
-          value: 54,
-          label: "Rendering vertical MP4",
-          detail:
-            "FFmpeg is cutting the clip, fitting it to 1080x1920, and adding word-by-word captions."
+          value: 48,
+          label: "Transcribing speech",
+          detail: "Whisper is listening to the clip and extracting word-level timestamps."
         });
       }, 4500),
       window.setTimeout(() => {
         setRenderProgress({
           clipId: clip.id,
-          value: 78,
+          value: 66,
+          label: "Rendering vertical MP4",
+          detail:
+            "FFmpeg is fitting the clip to 1080x1920 and burning synced word-by-word captions."
+        });
+      }, 10000),
+      window.setTimeout(() => {
+        setRenderProgress({
+          clipId: clip.id,
+          value: 84,
           label: "Encoding MP4",
           detail: "Finalizing video and audio for browser download."
         });
-      }, 12000)
+      }, 18000)
     ];
 
     try {
@@ -282,7 +290,7 @@ export default function Home() {
           </form>
           <p className="input-note">
             This POC uses public YouTube captions when available, then falls back to Gemini video
-            analysis. MP4 export is local-only and uses FFmpeg with word-by-word captions.
+            analysis. MP4 export is local-only and uses Whisper + FFmpeg for spoken captions.
           </p>
           {(isLoading || result || error) && (
             <div className="progress-panel" aria-live="polite">
