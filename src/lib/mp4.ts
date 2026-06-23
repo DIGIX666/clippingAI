@@ -14,11 +14,14 @@ type RenderClipInput = {
 type WhisperWord = {
   start: number;
   end: number;
+  segmentIndex: number;
   word: string;
 };
 
 type WhisperJson = {
   segments?: Array<{
+    start?: number;
+    end?: number;
     words?: Array<{
       start?: number;
       end?: number;
@@ -116,10 +119,13 @@ async function transcribeWords(audioPath: string, outputDir: string): Promise<Wh
     const payload = JSON.parse(await readFile(transcriptPath, "utf8")) as WhisperJson;
 
     return (payload.segments ?? [])
-      .flatMap((segment) => segment.words ?? [])
+      .flatMap((segment, segmentIndex) =>
+        (segment.words ?? []).map((word) => ({ ...word, segmentIndex }))
+      )
       .map((word) => ({
         start: Number(word.start ?? 0),
         end: Number(word.end ?? word.start ?? 0),
+        segmentIndex: word.segmentIndex,
         word: String(word.word ?? "").trim()
       }))
       .filter((word) => word.word.length > 0 && word.end >= word.start)
@@ -238,21 +244,63 @@ ${captionEvents}
 }
 
 function createTimedWordCaptionEvents(words: WhisperWord[], duration: number): string {
-  return words
-    .map((word, index) => {
-      const start = Math.min(duration, Math.max(0, word.start));
-      const nextStart = words[index + 1]?.start;
-      const end = Math.min(
-        duration,
-        Math.max(word.end, typeof nextStart === "number" ? nextStart : word.end + 0.35)
-      );
-      const text = buildCaptionWindow(
-        words.map((item) => escapeAssText(item.word)),
-        index
-      );
-      return `Dialogue: 0,${formatAssTime(start)},${formatAssTime(end)},Caption,,0,0,0,,${text}`;
-    })
+  return groupTimedWords(words)
+    .flatMap((group) =>
+      group.map((word, index) => {
+        const start = Math.min(duration, Math.max(0, word.start));
+        const nextStart = group[index + 1]?.start;
+        const end = Math.min(
+          duration,
+          Math.max(word.end, typeof nextStart === "number" ? nextStart : word.end + 0.35)
+        );
+        const text = buildCaptionWindow(
+          group.map((item) => escapeAssText(item.word)),
+          index
+        );
+        return `Dialogue: 0,${formatAssTime(start)},${formatAssTime(end)},Caption,,0,0,0,,${text}`;
+      })
+    )
     .join("\n");
+}
+
+function groupTimedWords(words: WhisperWord[]): WhisperWord[][] {
+  const groups: WhisperWord[][] = [];
+  let current: WhisperWord[] = [];
+
+  for (const word of words) {
+    const previous = current[current.length - 1];
+
+    if (previous && shouldStartNewCaptionGroup(previous, word, current)) {
+      groups.push(current);
+      current = [];
+    }
+
+    current.push(word);
+  }
+
+  if (current.length > 0) {
+    groups.push(current);
+  }
+
+  return groups;
+}
+
+function shouldStartNewCaptionGroup(
+  previous: WhisperWord,
+  next: WhisperWord,
+  currentGroup: WhisperWord[]
+): boolean {
+  const pauseSeconds = next.start - previous.end;
+  const groupDuration = previous.end - currentGroup[0].start;
+  const endsSentence = /[.!?…]$/.test(previous.word.trim());
+
+  return (
+    next.segmentIndex !== previous.segmentIndex ||
+    pauseSeconds > 0.55 ||
+    endsSentence ||
+    currentGroup.length >= 7 ||
+    groupDuration > 2.8
+  );
 }
 
 function createEstimatedWordCaptionEvents(subtitles: string, duration: number): string {
@@ -279,8 +327,8 @@ function createEstimatedWordCaptionEvents(subtitles: string, duration: number): 
 }
 
 function buildCaptionWindow(words: string[], activeIndex: number): string {
-  const wordsPerLine = 5;
-  const maxVisibleWords = 10;
+  const wordsPerLine = 4;
+  const maxVisibleWords = 7;
   const windowStart = Math.max(0, activeIndex - maxVisibleWords + 1);
   const visibleWords = words.slice(windowStart, activeIndex + 1);
   const lines: string[] = [];

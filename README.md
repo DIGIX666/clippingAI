@@ -153,6 +153,10 @@ Word-by-word captions use Whisper word timestamps when speech is detected in the
 clip. If Whisper fails or finds no words, the renderer falls back to estimated
 timing from the generated subtitle text and clip duration.
 
+Caption rendering groups words by Whisper segment, pauses, punctuation, and
+short maximum line length. This prevents separate sentences or alternating
+speakers from being displayed as one long continuous subtitle.
+
 Some YouTube URLs may block local MP4 export with a bot/authentication check.
 For a reliable production flow, add one of these ingestion paths:
 
