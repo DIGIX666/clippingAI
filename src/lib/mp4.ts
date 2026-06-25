@@ -234,7 +234,7 @@ ScaledBorderAndShadow: yes
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Hook,Arial,72,&H00FFFFFF,&H000000FF,&H00000000,&HAA000000,1,0,0,0,100,100,0,0,1,4,2,8,70,70,120,1
-Style: Caption,Arial,66,&H00FFFFFF,&H000000FF,&H00000000,&H7A000000,1,0,0,0,102,102,0,0,1,6,3,2,78,78,170,1
+Style: Caption,Arial,64,&H00FFFFFF,&H000000FF,&H00000000,&H7A000000,1,0,0,0,100,100,0,0,1,6,3,2,96,96,230,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -249,15 +249,16 @@ function createTimedWordCaptionEvents(words: WhisperWord[], duration: number): s
       group.map((word, index) => {
         const start = Math.min(duration, Math.max(0, word.start));
         const nextStart = group[index + 1]?.start;
-        const end = Math.min(
-          duration,
-          Math.max(word.end, typeof nextStart === "number" ? nextStart : word.end + 0.35)
-        );
-        const text = buildCaptionWindow(
-          group.map((item) => escapeAssText(item.word)),
-          index
-        );
-        return `Dialogue: 0,${formatAssTime(start)},${formatAssTime(end)},Caption,,0,0,0,,${text}`;
+      const end = Math.min(
+        duration,
+        Math.max(word.end, typeof nextStart === "number" ? nextStart : word.end + 0.35)
+      );
+      const safeEnd = Math.max(start + 0.12, end - 0.03);
+      const text = buildCaptionWindow(
+        group.map((item) => escapeAssText(item.word)),
+        index
+      );
+      return `Dialogue: 0,${formatAssTime(start)},${formatAssTime(safeEnd)},Caption,,0,0,0,,${text}`;
       })
     )
     .join("\n");
@@ -298,8 +299,8 @@ function shouldStartNewCaptionGroup(
     next.segmentIndex !== previous.segmentIndex ||
     pauseSeconds > 0.55 ||
     endsSentence ||
-    currentGroup.length >= 7 ||
-    groupDuration > 2.8
+    currentGroup.length >= 4 ||
+    groupDuration > 1.8
   );
 }
 
@@ -320,15 +321,15 @@ function createEstimatedWordCaptionEvents(subtitles: string, duration: number): 
     .map((_, index) => {
       const start = Math.min(duration, index * wordDuration);
       const end = Math.min(duration, Math.max(start + 0.2, (index + 1) * wordDuration));
+      const safeEnd = Math.max(start + 0.12, end - 0.03);
       const text = buildCaptionWindow(words, index);
-      return `Dialogue: 0,${formatAssTime(start)},${formatAssTime(end)},Caption,,0,0,0,,${text}`;
+      return `Dialogue: 0,${formatAssTime(start)},${formatAssTime(safeEnd)},Caption,,0,0,0,,${text}`;
     })
     .join("\n");
 }
 
 function buildCaptionWindow(words: string[], activeIndex: number): string {
-  const wordsPerLine = 3;
-  const maxVisibleWords = 6;
+  const maxVisibleWords = 4;
   const windowStart = Math.max(0, activeIndex - maxVisibleWords + 1);
   const visibleWords = words.slice(windowStart, activeIndex + 1).map((word, index, visible) => {
     if (index === visible.length - 1) {
@@ -337,13 +338,8 @@ function buildCaptionWindow(words: string[], activeIndex: number): string {
 
     return word;
   });
-  const lines: string[] = [];
 
-  for (let index = 0; index < visibleWords.length; index += wordsPerLine) {
-    lines.push(visibleWords.slice(index, index + wordsPerLine).join(" "));
-  }
-
-  return lines.slice(-2).join("\\N");
+  return `{\\an2\\q2}${visibleWords.join(" ")}`;
 }
 
 function highlightActiveWord(word: string): string {
