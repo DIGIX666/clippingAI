@@ -1,0 +1,26 @@
+{
+  "name": "clippingai",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "next": "15.4.8",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "zod": "^3.25.67"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.3.1",
+    "@types/node": "^22.15.34",
+    "@types/react": "^19.0.14",
+    "@types/react-dom": "^19.0.0",
+    "eslint": "^9.29.0",
+    "eslint-config-next": "15.4.8",
+    "typescript": "^5.8.3"
+  }
+}

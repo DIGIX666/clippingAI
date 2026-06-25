@@ -94,7 +94,88 @@ clippingAI/
     PRODUCT_REVIEW.md
 ```
 
-Application code can be added after the architecture is validated.
+## Local POC
+
+The repository now includes a minimal Vercel-ready Next.js POC.
+
+### What Works
+
+- Paste a YouTube URL.
+- Fetch public YouTube captions when available.
+- Send the transcript to Gemini.
+- Generate 5-8 candidate clips.
+- Edit hooks, subtitles, and titles in the browser.
+- Preview the selected timestamp in an embedded YouTube player.
+- Download a local MP4 export for each clip.
+- Transcribe the selected clip audio with Whisper for spoken subtitles.
+- Burn progressive word-by-word captions into local MP4 exports.
+- Fill vertical exports with a blurred video background instead of black bars.
+- Export the clip plan as JSON.
+
+### What Does Not Work Yet
+
+- MP4 export is local POC only.
+- MP4 export requires `ffmpeg` and `yt-dlp`.
+- It does not save projects in a database.
+- It does not publish to TikTok or Instagram.
+
+### Setup
+
+```bash
+npm install
+cp .env.example .env.local
+python3 -m venv .venv
+.venv/bin/pip install yt-dlp
+```
+
+Add a Gemini API key:
+
+```env
+AI_PROVIDER=gemini
+GEMINI_API_KEY=your_gemini_key
+```
+
+Run locally:
+
+```bash
+npm run dev
+```
+
+MP4 export uses the local `.venv/bin/yt-dlp` binary when present, `whisper` for
+automatic speech transcription, and `ffmpeg` from your system path. This is not
+production-ready for Vercel serverless; a real deployment should move rendering
+to a worker service.
+
+The generated MP4 is not saved in the repository or a database. The API returns
+the file directly to the browser, so it is saved wherever the browser normally
+puts downloads, usually the user's `Downloads` folder.
+
+Word-by-word captions use Whisper word timestamps when speech is detected in the
+clip. If Whisper fails or finds no words, the renderer falls back to estimated
+timing from the generated subtitle text and clip duration.
+
+Caption rendering groups words by Whisper segment, pauses, punctuation, and
+short maximum line length. It keeps captions to one short line at a time to
+avoid overlapping phrases and uncontrolled wrapping.
+
+Some YouTube URLs may block local MP4 export with a bot/authentication check.
+For a reliable production flow, add one of these ingestion paths:
+
+- user uploads the source file,
+- user connects their own YouTube account,
+- renderer uses authenticated cookies for user-owned videos.
+
+Open:
+
+```text
+http://localhost:3000
+```
+
+### AI Provider Notes
+
+Gemini is the active provider for the POC because it has a usable free tier for tests. An OpenAI provider stub is kept in `src/lib/ai/openai.example.ts` for later, when OpenAI API credits are available.
+
+Application code should stay behind the `analyzeTranscript` provider interface so Gemini, OpenAI, Groq, or OpenRouter can be swapped without rewriting the product flow.
 
 ## Important Platform Constraints
 
