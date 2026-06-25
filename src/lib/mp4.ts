@@ -234,7 +234,7 @@ ScaledBorderAndShadow: yes
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Hook,Arial,72,&H00FFFFFF,&H000000FF,&H00000000,&HAA000000,1,0,0,0,100,100,0,0,1,4,2,8,70,70,120,1
-Style: Caption,Arial,58,&H00FFFFFF,&H000000FF,&H00000000,&HAA000000,1,0,0,0,100,100,0,0,1,4,2,2,70,70,140,1
+Style: Caption,Arial,66,&H00FFFFFF,&H000000FF,&H00000000,&H7A000000,1,0,0,0,102,102,0,0,1,6,3,2,78,78,170,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -327,10 +327,16 @@ function createEstimatedWordCaptionEvents(subtitles: string, duration: number): 
 }
 
 function buildCaptionWindow(words: string[], activeIndex: number): string {
-  const wordsPerLine = 4;
-  const maxVisibleWords = 7;
+  const wordsPerLine = 3;
+  const maxVisibleWords = 6;
   const windowStart = Math.max(0, activeIndex - maxVisibleWords + 1);
-  const visibleWords = words.slice(windowStart, activeIndex + 1);
+  const visibleWords = words.slice(windowStart, activeIndex + 1).map((word, index, visible) => {
+    if (index === visible.length - 1) {
+      return highlightActiveWord(word);
+    }
+
+    return word;
+  });
   const lines: string[] = [];
 
   for (let index = 0; index < visibleWords.length; index += wordsPerLine) {
@@ -338,6 +344,10 @@ function buildCaptionWindow(words: string[], activeIndex: number): string {
   }
 
   return lines.slice(-2).join("\\N");
+}
+
+function highlightActiveWord(word: string): string {
+  return `{\\c&H0048E8FF&\\3c&H00000000&\\bord7\\shad2\\fscx112\\fscy112}${word}{\\rCaption}`;
 }
 
 function formatAssTime(seconds: number): string {
