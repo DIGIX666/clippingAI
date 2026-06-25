@@ -109,6 +109,7 @@ The repository now includes a minimal Vercel-ready Next.js POC.
 - Download a local MP4 export for each clip.
 - Transcribe the selected clip audio with Whisper for spoken subtitles.
 - Burn progressive word-by-word captions into local MP4 exports.
+- Fill vertical exports with a blurred video background instead of black bars.
 - Export the clip plan as JSON.
 
 ### What Does Not Work Yet

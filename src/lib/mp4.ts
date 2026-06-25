@@ -56,8 +56,12 @@ export async function renderClipToMp4(input: RenderClipInput): Promise<Buffer> {
       sourcePath,
       "-t",
       String(duration),
-      "-vf",
-      `scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,subtitles=${escapeFilterPath(assPath)}`,
+      "-filter_complex",
+      createVerticalBlurFilter(assPath),
+      "-map",
+      "[outv]",
+      "-map",
+      "0:a?",
       "-c:v",
       "libx264",
       "-preset",
@@ -78,6 +82,15 @@ export async function renderClipToMp4(input: RenderClipInput): Promise<Buffer> {
   } finally {
     await rm(tempDir, { force: true, recursive: true });
   }
+}
+
+function createVerticalBlurFilter(assPath: string): string {
+  return [
+    "[0:v]split=2[bgsrc][fgsrc]",
+    "[bgsrc]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=28:2,eq=brightness=-0.08:saturation=0.85[bg]",
+    "[fgsrc]scale=1080:1920:force_original_aspect_ratio=decrease[fg]",
+    "[bg][fg]overlay=(W-w)/2:(H-h)/2,subtitles=" + escapeFilterPath(assPath) + "[outv]"
+  ].join(";");
 }
 
 async function extractAudioForTranscription(sourcePath: string, audioPath: string): Promise<void> {
