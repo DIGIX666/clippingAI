@@ -9,6 +9,7 @@
     "postcss": "8.5.15"
   },
   "scripts": {
+    "postinstall": "node scripts/install-yt-dlp.mjs",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
@@ -19,7 +20,6 @@
     "next": "16.2.9",
     "react": "19.2.7",
     "react-dom": "19.2.7",
-    "yt-dlp-exec": "^1.0.2",
     "zod": "^3.25.67"
   },
   "devDependencies": {

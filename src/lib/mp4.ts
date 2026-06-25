@@ -194,11 +194,19 @@ async function resolveYtDlpPath(): Promise<string> {
   const candidates = [
     process.env.YT_DLP_PATH,
     join(process.cwd(), ".venv", "bin", "yt-dlp"),
-    join(process.cwd(), "node_modules", "yt-dlp-exec", "bin", "yt-dlp"),
+    getPackagedYtDlpPath(),
     "yt-dlp"
   ].filter((candidate): candidate is string => Boolean(candidate));
 
   return resolveFirstAvailableBinary(candidates, "yt-dlp");
+}
+
+function getPackagedYtDlpPath(): string | null {
+  if (process.platform !== "linux" || process.arch !== "x64") {
+    return null;
+  }
+
+  return join(process.cwd(), "bin", "yt-dlp-linux");
 }
 
 function runFfmpeg(args: string[]): Promise<void> {

@@ -9,4 +9,5 @@ coverage
 *.log
 .DS_Store
 .venv
+bin/yt-dlp-linux
 *-player-script.js
