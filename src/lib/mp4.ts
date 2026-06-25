@@ -2,6 +2,7 @@ import { spawn } from "child_process";
 import { access, mkdtemp, readFile, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
+import ffmpegStaticPath from "ffmpeg-static";
 
 type RenderClipInput = {
   youtubeUrl: string;
@@ -190,18 +191,46 @@ async function downloadSourceVideo(
 }
 
 async function resolveYtDlpPath(): Promise<string> {
-  const localPath = join(process.cwd(), ".venv", "bin", "yt-dlp");
+  const candidates = [
+    process.env.YT_DLP_PATH,
+    join(process.cwd(), ".venv", "bin", "yt-dlp"),
+    join(process.cwd(), "node_modules", "yt-dlp-exec", "bin", "yt-dlp"),
+    "yt-dlp"
+  ].filter((candidate): candidate is string => Boolean(candidate));
 
-  try {
-    await access(localPath);
-    return localPath;
-  } catch {
-    return "yt-dlp";
-  }
+  return resolveFirstAvailableBinary(candidates, "yt-dlp");
 }
 
 function runFfmpeg(args: string[]): Promise<void> {
-  return runProcess("ffmpeg", args);
+  return resolveFfmpegPath().then((ffmpegPath) => runProcess(ffmpegPath, args));
+}
+
+async function resolveFfmpegPath(): Promise<string> {
+  const candidates = [process.env.FFMPEG_PATH, ffmpegStaticPath, "ffmpeg"].filter(
+    (candidate): candidate is string => Boolean(candidate)
+  );
+
+  return resolveFirstAvailableBinary(candidates, "ffmpeg");
+}
+
+async function resolveFirstAvailableBinary(
+  candidates: string[],
+  binaryName: string
+): Promise<string> {
+  for (const candidate of candidates) {
+    if (candidate === binaryName) {
+      return candidate;
+    }
+
+    try {
+      await access(candidate);
+      return candidate;
+    } catch {
+      continue;
+    }
+  }
+
+  return binaryName;
 }
 
 function runProcess(command: string, args: string[]): Promise<void> {
@@ -213,7 +242,18 @@ function runProcess(command: string, args: string[]): Promise<void> {
       errors.push(chunk);
     });
 
-    child.on("error", reject);
+    child.on("error", (error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") {
+        reject(
+          new Error(
+            `${command} was not found in the server runtime. On Vercel, keep the packaged binary dependencies installed; on another host, set YT_DLP_PATH or FFMPEG_PATH.`
+          )
+        );
+        return;
+      }
+
+      reject(error);
+    });
     child.on("close", (code) => {
       if (code === 0) {
         resolve();
