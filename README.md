@@ -121,6 +121,10 @@ The repository now includes a minimal Vercel-ready Next.js POC.
   file and passes it to `yt-dlp --cookies`.
 - It does not save projects in a database.
 - It does not publish to TikTok or Instagram.
+- Hosted analysis is optimized for public YouTube captions. Direct Gemini video
+  fallback is disabled by default on Vercel because it can take minutes and hit
+  request timeouts. Set `ENABLE_GEMINI_VIDEO_FALLBACK=1` only when you explicitly
+  want to test that slower path.
 
 ### Setup
 
