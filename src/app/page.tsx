@@ -27,6 +27,76 @@ const idleProgress: ProgressState = {
   detail: "Paste a YouTube URL to start analysis."
 };
 
+async function readJsonResponse<T>(response: Response, fallbackMessage: string): Promise<T> {
+  const text = await response.text();
+  const payload = parseJsonPayload(text);
+
+  if (!response.ok) {
+    throw new Error(getApiErrorMessage(payload, text, fallbackMessage, response.status));
+  }
+
+  if (!payload) {
+    throw new Error(`${fallbackMessage} Empty response from server.`);
+  }
+
+  return payload as T;
+}
+
+async function throwApiError(response: Response, fallbackMessage: string): Promise<never> {
+  const text = await response.text();
+  const payload = parseJsonPayload(text);
+  throw new Error(getApiErrorMessage(payload, text, fallbackMessage, response.status));
+}
+
+function parseJsonPayload(text: string): unknown | null {
+  if (!text.trim()) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+function getApiErrorMessage(
+  payload: unknown,
+  text: string,
+  fallbackMessage: string,
+  status: number
+): string {
+  if (isRecord(payload) && typeof payload.error === "string" && payload.error.trim()) {
+    return payload.error;
+  }
+
+  const details = summarizeServerText(text);
+
+  if (details) {
+    return `${fallbackMessage} Server returned HTTP ${status}: ${details}`;
+  }
+
+  return `${fallbackMessage} Server returned HTTP ${status}.`;
+}
+
+function summarizeServerText(text: string): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+
+  if (!normalized) {
+    return "";
+  }
+
+  if (normalized.startsWith("<")) {
+    return "non-JSON HTML error page.";
+  }
+
+  return normalized.slice(0, 240);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
 export default function Home() {
   const [url, setUrl] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -103,13 +173,7 @@ export default function Home() {
         body: JSON.stringify({ url })
       });
 
-      const payload = (await response.json()) as ApiAnalyzeResponse | { error?: string };
-
-      if (!response.ok) {
-        throw new Error("error" in payload ? payload.error : "Analysis failed.");
-      }
-
-      const analysis = payload as ApiAnalyzeResponse;
+      const analysis = await readJsonResponse<ApiAnalyzeResponse>(response, "Analysis failed.");
       setProgress({
         value: 100,
         label: "Analysis complete",
@@ -225,8 +289,7 @@ export default function Home() {
       });
 
       if (!response.ok) {
-        const payload = (await response.json()) as { error?: string };
-        throw new Error(payload.error ?? "MP4 export failed.");
+        await throwApiError(response, "MP4 export failed.");
       }
 
       const blob = await response.blob();
