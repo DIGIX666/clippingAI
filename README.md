@@ -101,8 +101,10 @@ The repository now includes a minimal Vercel-ready Next.js POC.
 ### What Works
 
 - Paste a YouTube URL.
+- Start an async analysis job and poll progress from the UI.
 - Fetch public YouTube captions when available.
 - Send the transcript to Gemini.
+- Fall back to Gemini direct video analysis for async jobs when captions are missing.
 - Generate 5-8 candidate clips.
 - Edit hooks, subtitles, and titles in the browser.
 - Preview the selected timestamp in an embedded YouTube player.
@@ -121,10 +123,12 @@ The repository now includes a minimal Vercel-ready Next.js POC.
   file and passes it to `yt-dlp --cookies`.
 - It does not save projects in a database.
 - It does not publish to TikTok or Instagram.
-- Hosted analysis is optimized for public YouTube captions. Direct Gemini video
-  fallback is disabled by default on Vercel because it can take minutes and hit
-  request timeouts. Set `ENABLE_GEMINI_VIDEO_FALLBACK=1` only when you explicitly
-  want to test that slower path.
+- The synchronous `/api/analyze` route is still optimized for public YouTube
+  captions. The UI now uses async jobs so videos without captions can use the
+  slower Gemini direct video fallback without blocking the initial request.
+- Async jobs use in-memory state by default, which is fine locally but not fully
+  reliable on serverless. For Vercel preview/production, add Upstash Redis env
+  vars so job progress/results survive between function invocations.
 
 ### Setup
 
@@ -141,6 +145,16 @@ Add a Gemini API key:
 AI_PROVIDER=gemini
 GEMINI_API_KEY=your_gemini_key
 ```
+
+For Vercel async job state, add these optional Redis variables:
+
+```env
+UPSTASH_REDIS_REST_URL=https://your-redis.upstash.io
+UPSTASH_REDIS_REST_TOKEN=your_upstash_token
+```
+
+Without Redis, the async flow can still work locally. On Vercel, polling may hit
+a different function instance and lose the in-memory job state.
 
 Run locally:
 
@@ -171,6 +185,24 @@ For a reliable production flow, add one of these ingestion paths:
 - user uploads the source file,
 - user connects their own YouTube account,
 - renderer uses authenticated cookies for user-owned videos.
+
+### Async Analysis Flow
+
+The UI no longer waits on `/api/analyze` directly:
+
+1. `POST /api/analyze-jobs` creates a queued job and returns `jobId`.
+2. The browser starts `POST /api/analyze-jobs/:jobId/run` in the background.
+3. The browser polls `GET /api/analyze-jobs/:jobId` for status and progress.
+4. The worker tries public captions first.
+5. If captions exist, Gemini analyzes the compact transcript.
+6. If captions are missing, Gemini analyzes the YouTube video directly.
+7. Completed jobs return the same clip candidate payload used by the editor.
+
+This is enough for a hosted POC, but the production version should move the
+`:jobId/run` worker to Railway, Render, Fly.io, or another container runtime.
+That worker can then download audio, run Whisper/faster-whisper for exact
+transcription, and call Gemini/OpenAI on the transcript without Vercel function
+timeouts.
 
 Open:
 

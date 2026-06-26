@@ -1,15 +1,8 @@
 "use client";
 
 import { FormEvent, useMemo, useState } from "react";
-import type { AnalyzeResponse, ClipCandidate, TranscriptSegment } from "@/lib/types";
+import type { AnalyzeJob, ApiAnalyzeResponse, ClipCandidate } from "@/lib/types";
 import { extractYouTubeVideoId, formatTimestamp } from "@/lib/youtube";
-
-type ApiAnalyzeResponse = AnalyzeResponse & {
-  analysisMode?: "transcript" | "youtube-video";
-  transcriptPreview?: TranscriptSegment[];
-  transcriptSegmentCount?: number;
-  warning?: string;
-};
 
 type ProgressState = {
   value: number;
@@ -19,6 +12,15 @@ type ProgressState = {
 
 type RenderProgressState = ProgressState & {
   clipId: string;
+};
+
+type CreateAnalyzeJobResponse = {
+  jobId: string;
+  job: AnalyzeJob;
+};
+
+type AnalyzeJobResponse = {
+  job: AnalyzeJob;
 };
 
 const idleProgress: ProgressState = {
@@ -97,6 +99,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
 export default function Home() {
   const [url, setUrl] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -127,45 +135,13 @@ export default function Home() {
     setEditableClips([]);
     setActiveClipId(null);
     setProgress({
-      value: 8,
-      label: "Preparing analysis",
-      detail: "Validating the YouTube URL and loading video metadata."
+      value: 2,
+      label: "Queueing analysis",
+      detail: "Creating an async job for this YouTube URL."
     });
 
-    const progressTimers = [
-      window.setTimeout(() => {
-        setProgress({
-          value: 24,
-          label: "Looking for captions",
-          detail: "Trying public YouTube captions first because transcript analysis is faster."
-        });
-      }, 900),
-      window.setTimeout(() => {
-        setProgress({
-          value: 42,
-          label: "Preparing Gemini input",
-          detail:
-            "If captions are missing or empty, the app falls back to Gemini direct video analysis."
-        });
-      }, 2600),
-      window.setTimeout(() => {
-        setProgress({
-          value: 68,
-          label: "Analyzing with Gemini",
-          detail: "Finding 30-60 second moments, hooks, subtitles, scores, and post metadata."
-        });
-      }, 5200),
-      window.setTimeout(() => {
-        setProgress({
-          value: 84,
-          label: "Building clip candidates",
-          detail: "Structuring the results for review and editing."
-        });
-      }, 12000)
-    ];
-
     try {
-      const response = await fetch("/api/analyze", {
+      const createResponse = await fetch("/api/analyze-jobs", {
         method: "POST",
         headers: {
           "content-type": "application/json"
@@ -173,12 +149,19 @@ export default function Home() {
         body: JSON.stringify({ url })
       });
 
-      const analysis = await readJsonResponse<ApiAnalyzeResponse>(response, "Analysis failed.");
-      setProgress({
-        value: 100,
-        label: "Analysis complete",
-        detail: `${analysis.clips.length} clip candidates are ready for review.`
+      const created = await readJsonResponse<CreateAnalyzeJobResponse>(
+        createResponse,
+        "Could not create analysis job."
+      );
+      syncProgressFromJob(created.job);
+
+      void fetch(`/api/analyze-jobs/${created.jobId}/run`, {
+        method: "POST"
+      }).catch(() => {
+        // The polling request below will surface the final job state when available.
       });
+
+      const analysis = await pollAnalyzeJob(created.jobId);
       setResult(analysis);
       setEditableClips(analysis.clips);
       setActiveClipId(analysis.clips[0]?.id ?? null);
@@ -190,8 +173,64 @@ export default function Home() {
       });
       setError(caught instanceof Error ? caught.message : "Analysis failed.");
     } finally {
-      progressTimers.forEach(window.clearTimeout);
       setIsLoading(false);
+    }
+  }
+
+  async function pollAnalyzeJob(jobId: string): Promise<ApiAnalyzeResponse> {
+    const maxAttempts = 240;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      await sleep(1500);
+
+      const response = await fetch(`/api/analyze-jobs/${jobId}`, {
+        cache: "no-store"
+      });
+      const payload = await readJsonResponse<AnalyzeJobResponse>(
+        response,
+        "Could not read analysis job."
+      );
+      const job = payload.job;
+      syncProgressFromJob(job);
+
+      if (job.status === "completed" && job.result) {
+        return job.result;
+      }
+
+      if (job.status === "failed") {
+        throw new Error(job.error ?? "Analysis job failed.");
+      }
+    }
+
+    throw new Error("Analysis job timed out. Try a shorter video or retry later.");
+  }
+
+  function syncProgressFromJob(job: AnalyzeJob) {
+    setProgress({
+      value: job.progress,
+      label: getJobProgressLabel(job),
+      detail: job.message
+    });
+  }
+
+  function getJobProgressLabel(job: AnalyzeJob): string {
+    switch (job.status) {
+      case "queued":
+        return "Analysis queued";
+      case "validating_url":
+        return "Preparing analysis";
+      case "checking_captions":
+        return "Looking for captions";
+      case "analyzing_transcript":
+        return "Analyzing transcript";
+      case "analyzing_video":
+        return "Analyzing video";
+      case "completed":
+        return "Analysis complete";
+      case "failed":
+        return "Analysis failed";
+      default:
+        return "Analyzing";
     }
   }
 
@@ -352,8 +391,9 @@ export default function Home() {
             </button>
           </form>
           <p className="input-note">
-            This POC uses public YouTube captions when available, then falls back to Gemini video
-            analysis. MP4 export is local-only and uses Whisper + FFmpeg for spoken captions.
+            This POC starts an async analysis job, uses public YouTube captions when available,
+            then falls back to Gemini video analysis for videos without captions. MP4 export uses
+            Whisper + FFmpeg for spoken captions.
           </p>
           {(isLoading || result || error) && (
             <div className="progress-panel" aria-live="polite">
@@ -477,8 +517,8 @@ export default function Home() {
                       />
                     </label>
 
-                  <p>{clip.reason}</p>
-                  <p>{clip.hashtags.join(" ")}</p>
+                    <p>{clip.reason}</p>
+                    <p>{clip.hashtags.join(" ")}</p>
 
                     {renderProgress?.clipId === clip.id ? (
                       <div className="render-progress" aria-live="polite">
