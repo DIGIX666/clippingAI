@@ -167,11 +167,14 @@ async function downloadSourceVideo(
   tempDir: string
 ): Promise<void> {
   const ytDlpPath = await resolveYtDlpPath();
+  const ffmpegPath = await resolveFfmpegPath();
   const cookiesPath = await resolveYouTubeCookiesPath(tempDir);
   const args = [
     "--no-playlist",
     "--js-runtimes",
     `node:${process.execPath}`,
+    "--ffmpeg-location",
+    ffmpegPath,
     "--format",
     "bv*[height<=720][ext=mp4]+ba[ext=m4a]/b[height<=720][ext=mp4]/b[ext=mp4]/b",
     "--merge-output-format",
