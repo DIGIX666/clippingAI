@@ -114,8 +114,11 @@ The repository now includes a minimal Vercel-ready Next.js POC.
 
 ### What Does Not Work Yet
 
-- MP4 export is local POC only.
-- MP4 export requires `ffmpeg` and `yt-dlp`.
+- MP4 export is still a POC path. Vercel can run the packaged `ffmpeg` and `yt-dlp`
+  binaries, but YouTube may block downloads from datacenter IPs.
+- For Vercel MP4 export reliability, set `YOUTUBE_COOKIES_BASE64` with a base64
+  encoded Netscape-format YouTube cookies file. The route writes it to a temporary
+  file and passes it to `yt-dlp --cookies`.
 - It does not save projects in a database.
 - It does not publish to TikTok or Instagram.
 

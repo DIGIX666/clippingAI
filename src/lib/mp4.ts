@@ -40,7 +40,13 @@ export async function renderClipToMp4(input: RenderClipInput): Promise<Buffer> {
   const outputPath = join(tempDir, "clip.mp4");
 
   try {
-    await downloadSourceVideo(input.youtubeUrl, sourcePath, input.startTime, input.endTime);
+    await downloadSourceVideo(
+      input.youtubeUrl,
+      sourcePath,
+      input.startTime,
+      input.endTime,
+      tempDir
+    );
     await extractAudioForTranscription(sourcePath, audioPath);
     const timedWords = await transcribeWords(audioPath, tempDir);
     await writeFile(
@@ -157,37 +163,72 @@ async function downloadSourceVideo(
   youtubeUrl: string,
   outputPath: string,
   startTime: number,
-  endTime: number
+  endTime: number,
+  tempDir: string
 ): Promise<void> {
   const ytDlpPath = await resolveYtDlpPath();
+  const cookiesPath = await resolveYouTubeCookiesPath(tempDir);
+  const args = [
+    "--no-playlist",
+    "--js-runtimes",
+    `node:${process.execPath}`,
+    "--format",
+    "bv*[height<=720][ext=mp4]+ba[ext=m4a]/b[height<=720][ext=mp4]/b[ext=mp4]/b",
+    "--merge-output-format",
+    "mp4",
+    "--download-sections",
+    `*${Math.max(0, startTime)}-${Math.max(startTime + 1, endTime)}`,
+    "--force-keyframes-at-cuts",
+    "--output",
+    outputPath
+  ];
+
+  if (cookiesPath) {
+    args.push("--cookies", cookiesPath);
+  }
+
+  args.push(youtubeUrl);
 
   try {
-    await runProcess(ytDlpPath, [
-      "--no-playlist",
-      "--js-runtimes",
-      `node:${process.execPath}`,
-      "--format",
-      "bv*[height<=720][ext=mp4]+ba[ext=m4a]/b[height<=720][ext=mp4]/b[ext=mp4]/b",
-      "--merge-output-format",
-      "mp4",
-      "--download-sections",
-      `*${Math.max(0, startTime)}-${Math.max(startTime + 1, endTime)}`,
-      "--force-keyframes-at-cuts",
-      "--output",
-      outputPath,
-      youtubeUrl
-    ]);
+    await runProcess(ytDlpPath, args);
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
 
     if (message.includes("Sign in to confirm") || message.includes("not a bot")) {
+      if (cookiesPath) {
+        throw new Error(
+          "YouTube still blocked the Vercel download even with cookies. Refresh the YouTube cookies, try a different account/session, or move MP4 rendering to a dedicated worker with a more stable network identity."
+        );
+      }
+
       throw new Error(
-        "YouTube blocked the local video download for this URL. Try another video, or later we need to add authenticated cookies / user-owned uploads for reliable MP4 rendering."
+        "YouTube blocked the Vercel video download. The same URL can work locally because your home IP/browser session is trusted. Add YOUTUBE_COOKIES_BASE64 in Vercel, or move MP4 rendering to a dedicated worker/container."
       );
     }
 
     throw error;
   }
+}
+
+async function resolveYouTubeCookiesPath(tempDir: string): Promise<string | null> {
+  if (process.env.YOUTUBE_COOKIES_PATH) {
+    return process.env.YOUTUBE_COOKIES_PATH;
+  }
+
+  const encodedCookies = process.env.YOUTUBE_COOKIES_BASE64;
+  const rawCookies = process.env.YOUTUBE_COOKIES;
+
+  if (!encodedCookies && !rawCookies) {
+    return null;
+  }
+
+  const cookies = encodedCookies
+    ? Buffer.from(encodedCookies, "base64").toString("utf8")
+    : rawCookies ?? "";
+  const cookiesPath = join(tempDir, "youtube-cookies.txt");
+  await writeFile(cookiesPath, cookies, "utf8");
+
+  return cookiesPath;
 }
 
 async function resolveYtDlpPath(): Promise<string> {
