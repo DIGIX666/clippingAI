@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
-import { runAnalyze, toAnalysisError } from "@/lib/analyze";
+import { createAnalyzeJob } from "@/lib/analyze-jobs";
 
 export const runtime = "nodejs";
-export const maxDuration = 300;
 
 export async function POST(request: Request) {
   try {
@@ -13,11 +12,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "A YouTube URL is required." }, { status: 400 });
     }
 
-    const analysis = await runAnalyze(url);
-    return NextResponse.json(analysis);
+    const job = await createAnalyzeJob(url);
+    return NextResponse.json({ jobId: job.id, job }, { status: 202 });
   } catch (error) {
-    const message = toAnalysisError(error);
-    console.error("[api/analyze]", message);
+    const message = error instanceof Error ? error.message : "Could not create analysis job.";
+    console.error("[api/analyze-jobs]", message);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

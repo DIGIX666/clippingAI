@@ -38,3 +38,31 @@ export const analyzeResponseSchema = z.object({
 
 export type ClipCandidate = z.infer<typeof clipSchema>;
 export type AnalyzeResponse = z.infer<typeof analyzeResponseSchema>;
+
+export type ApiAnalyzeResponse = AnalyzeResponse & {
+  analysisMode?: "transcript" | "youtube-video";
+  transcriptPreview?: TranscriptSegment[];
+  transcriptSegmentCount?: number;
+  warning?: string;
+};
+
+export type AnalyzeJobStatus =
+  | "queued"
+  | "validating_url"
+  | "checking_captions"
+  | "analyzing_transcript"
+  | "analyzing_video"
+  | "completed"
+  | "failed";
+
+export type AnalyzeJob = {
+  id: string;
+  url: string;
+  status: AnalyzeJobStatus;
+  progress: number;
+  message: string;
+  createdAt: string;
+  updatedAt: string;
+  result?: ApiAnalyzeResponse;
+  error?: string;
+};
