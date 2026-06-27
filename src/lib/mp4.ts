@@ -1,7 +1,8 @@
 import { spawn } from "child_process";
+import { constants } from "fs";
 import { access, mkdtemp, readFile, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
-import { join } from "path";
+import { delimiter, isAbsolute, join } from "path";
 import ffmpegStaticPath from "ffmpeg-static";
 
 type RenderClipInput = {
@@ -173,6 +174,8 @@ async function downloadSourceVideo(
     "--no-playlist",
     "--js-runtimes",
     `node:${process.execPath}`,
+    "--remote-components",
+    "ejs:github",
     "--ffmpeg-location",
     ffmpegPath,
     "--format",
@@ -197,10 +200,21 @@ async function downloadSourceVideo(
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
 
+    if (
+      message.includes("cookie") &&
+      (message.includes("invalid") ||
+        message.includes("expired") ||
+        message.includes("malformed"))
+    ) {
+      throw new Error(
+        "The YouTube cookies are invalid or expired. Export fresh youtube.com cookies in Netscape format, encode that file as base64, update YOUTUBE_COOKIES_BASE64, and redeploy."
+      );
+    }
+
     if (message.includes("Sign in to confirm") || message.includes("not a bot")) {
       if (cookiesPath) {
         throw new Error(
-          "YouTube still blocked the Vercel download even with cookies. Refresh the YouTube cookies, try a different account/session, or move MP4 rendering to a dedicated worker with a more stable network identity."
+          "YouTube rejected the download even though cookies were loaded. Fresh cookies may help, but Vercel's shared datacenter IP can still be blocked. Use a dedicated rendering worker or user-owned uploads for reliable MP4 export."
         );
       }
 
@@ -215,6 +229,7 @@ async function downloadSourceVideo(
 
 async function resolveYouTubeCookiesPath(tempDir: string): Promise<string | null> {
   if (process.env.YOUTUBE_COOKIES_PATH) {
+    await access(process.env.YOUTUBE_COOKIES_PATH, constants.R_OK);
     return process.env.YOUTUBE_COOKIES_PATH;
   }
 
@@ -228,6 +243,11 @@ async function resolveYouTubeCookiesPath(tempDir: string): Promise<string | null
   const cookies = encodedCookies
     ? Buffer.from(encodedCookies, "base64").toString("utf8")
     : rawCookies ?? "";
+  if (!cookies.includes("\t.youtube.com\t") && !cookies.includes("\tyoutube.com\t")) {
+    throw new Error(
+      "YOUTUBE_COOKIES_BASE64 does not contain Netscape-format YouTube cookies. Export cookies for youtube.com only, then base64-encode the cookies.txt file without modifying it."
+    );
+  }
   const cookiesPath = join(tempDir, "youtube-cookies.txt");
   await writeFile(cookiesPath, cookies, "utf8");
 
@@ -270,19 +290,28 @@ async function resolveFirstAvailableBinary(
   binaryName: string
 ): Promise<string> {
   for (const candidate of candidates) {
-    if (candidate === binaryName) {
-      return candidate;
-    }
+    const paths = isAbsolute(candidate) || candidate.includes("/")
+      ? [candidate]
+      : (process.env.PATH ?? "")
+          .split(delimiter)
+          .filter(Boolean)
+          .map((directory) => join(directory, candidate));
 
-    try {
-      await access(candidate);
-      return candidate;
-    } catch {
-      continue;
+    for (const path of paths) {
+      try {
+        await access(path, constants.X_OK);
+        return path;
+      } catch {
+        continue;
+      }
     }
   }
 
-  return binaryName;
+  throw new Error(
+    `${binaryName} was not found or is not executable. Install it or set ${
+      binaryName === "ffmpeg" ? "FFMPEG_PATH" : "YT_DLP_PATH"
+    } to an executable path.`
+  );
 }
 
 function runProcess(command: string, args: string[]): Promise<void> {
