@@ -40,7 +40,7 @@ export type ClipCandidate = z.infer<typeof clipSchema>;
 export type AnalyzeResponse = z.infer<typeof analyzeResponseSchema>;
 
 export type ApiAnalyzeResponse = AnalyzeResponse & {
-  analysisMode?: "transcript" | "youtube-video";
+  analysisMode?: "transcript" | "youtube-video" | "uploaded-video";
   transcriptPreview?: TranscriptSegment[];
   transcriptSegmentCount?: number;
   warning?: string;

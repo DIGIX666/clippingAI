@@ -6,7 +6,17 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 
 const exportRequestSchema = z.object({
-  youtubeUrl: z.string().url(),
+  source: z.discriminatedUnion("type", [
+    z.object({
+      type: z.literal("youtube"),
+      url: z.string().url()
+    }),
+    z.object({
+      type: z.literal("upload"),
+      sourceId: z.string().uuid()
+    })
+  ]),
+  includeCaptions: z.boolean().default(true),
   clip: z.object({
     id: z.string(),
     startTime: z.number().min(0),
@@ -20,11 +30,12 @@ export async function POST(request: Request) {
   try {
     const body = exportRequestSchema.parse(await request.json());
     const mp4 = await renderClipToMp4({
-      youtubeUrl: body.youtubeUrl,
+      source: body.source,
       startTime: body.clip.startTime,
       endTime: body.clip.endTime,
       hook: body.clip.hook,
-      subtitles: body.clip.subtitles
+      subtitles: body.clip.subtitles,
+      includeCaptions: body.includeCaptions
     });
 
     const bodyBuffer = new Uint8Array(mp4);

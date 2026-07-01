@@ -47,10 +47,18 @@ ${transcript}
 }
 
 export function buildYouTubeVideoAnalysisPrompt(video: VideoMetadata): string {
+  return buildVideoAnalysisPrompt(video, "YouTube video");
+}
+
+export function buildUploadedVideoAnalysisPrompt(video: VideoMetadata): string {
+  return buildVideoAnalysisPrompt(video, "uploaded MP4");
+}
+
+function buildVideoAnalysisPrompt(video: VideoMetadata, sourceLabel: string): string {
   return `
 You are an expert short-form video editor.
 
-Analyze this YouTube video directly from its audio and visual content. Propose the strongest short clips for TikTok, Instagram Reels, and YouTube Shorts.
+Analyze this ${sourceLabel} directly from its audio and visual content. Propose the strongest short clips for TikTok, Instagram Reels, and YouTube Shorts.
 
 Video:
 - Title: ${video.title}

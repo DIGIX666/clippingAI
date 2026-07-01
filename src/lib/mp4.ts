@@ -4,13 +4,25 @@ import { access, mkdtemp, readFile, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { delimiter, isAbsolute, join } from "path";
 import ffmpegStaticPath from "ffmpeg-static";
+import { getUploadedVideo } from "@/lib/uploaded-videos";
+
+export type VideoSource =
+  | {
+      type: "youtube";
+      url: string;
+    }
+  | {
+      type: "upload";
+      sourceId: string;
+    };
 
 type RenderClipInput = {
-  youtubeUrl: string;
+  source: VideoSource;
   startTime: number;
   endTime: number;
   hook: string;
   subtitles: string;
+  includeCaptions: boolean;
 };
 
 type WhisperWord = {
@@ -41,20 +53,23 @@ export async function renderClipToMp4(input: RenderClipInput): Promise<Buffer> {
   const outputPath = join(tempDir, "clip.mp4");
 
   try {
-    await downloadSourceVideo(
-      input.youtubeUrl,
+    await prepareSourceVideo(
+      input.source,
       sourcePath,
       input.startTime,
       input.endTime,
       tempDir
     );
-    await extractAudioForTranscription(sourcePath, audioPath);
-    const timedWords = await transcribeWords(audioPath, tempDir);
-    await writeFile(
-      assPath,
-      createAssCaptions(input.hook, input.subtitles, duration, timedWords),
-      "utf8"
-    );
+
+    if (input.includeCaptions) {
+      await extractAudioForTranscription(sourcePath, audioPath);
+      const timedWords = await transcribeWords(audioPath, tempDir);
+      await writeFile(
+        assPath,
+        createAssCaptions(input.hook, input.subtitles, duration, timedWords),
+        "utf8"
+      );
+    }
 
     await runFfmpeg([
       "-hide_banner",
@@ -65,7 +80,7 @@ export async function renderClipToMp4(input: RenderClipInput): Promise<Buffer> {
       "-t",
       String(duration),
       "-filter_complex",
-      createVerticalBlurFilter(assPath),
+      createVerticalBlurFilter(input.includeCaptions ? assPath : null),
       "-map",
       "[outv]",
       "-map",
@@ -92,13 +107,21 @@ export async function renderClipToMp4(input: RenderClipInput): Promise<Buffer> {
   }
 }
 
-function createVerticalBlurFilter(assPath: string): string {
-  return [
+function createVerticalBlurFilter(assPath: string | null): string {
+  const filters = [
     "[0:v]split=2[bgsrc][fgsrc]",
     "[bgsrc]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=28:2,eq=brightness=-0.08:saturation=0.85[bg]",
-    "[fgsrc]scale=1080:1920:force_original_aspect_ratio=decrease[fg]",
-    "[bg][fg]overlay=(W-w)/2:(H-h)/2,subtitles=" + escapeFilterPath(assPath) + "[outv]"
-  ].join(";");
+    "[fgsrc]scale=1080:1920:force_original_aspect_ratio=decrease[fg]"
+  ];
+  const overlay = "[bg][fg]overlay=(W-w)/2:(H-h)/2";
+
+  filters.push(
+    assPath
+      ? `${overlay},subtitles=${escapeFilterPath(assPath)}[outv]`
+      : `${overlay}[outv]`
+  );
+
+  return filters.join(";");
 }
 
 async function extractAudioForTranscription(sourcePath: string, audioPath: string): Promise<void> {
@@ -225,6 +248,52 @@ async function downloadSourceVideo(
 
     throw error;
   }
+}
+
+async function prepareSourceVideo(
+  source: VideoSource,
+  outputPath: string,
+  startTime: number,
+  endTime: number,
+  tempDir: string
+): Promise<void> {
+  if (source.type === "youtube") {
+    await downloadSourceVideo(source.url, outputPath, startTime, endTime, tempDir);
+    return;
+  }
+
+  const uploadedVideo = await getUploadedVideo(source.sourceId);
+  const duration = Math.max(1, Math.min(120, endTime - startTime));
+
+  await runFfmpeg([
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-ss",
+    String(Math.max(0, startTime)),
+    "-i",
+    uploadedVideo.filePath,
+    "-t",
+    String(duration),
+    "-map",
+    "0:v:0",
+    "-map",
+    "0:a?",
+    "-c:v",
+    "libx264",
+    "-preset",
+    "ultrafast",
+    "-crf",
+    "18",
+    "-c:a",
+    "aac",
+    "-b:a",
+    "160k",
+    "-movflags",
+    "+faststart",
+    "-y",
+    outputPath
+  ]);
 }
 
 async function resolveYouTubeCookiesPath(tempDir: string): Promise<string | null> {
