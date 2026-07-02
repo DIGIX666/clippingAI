@@ -117,7 +117,9 @@ function createVerticalBlurFilter(assPath: string | null): string {
 
   filters.push(
     assPath
-      ? `${overlay},subtitles=${escapeFilterPath(assPath)}[outv]`
+      ? `${overlay},subtitles=${escapeFilterPath(assPath)}:fontsdir=${escapeFilterPath(
+          getCaptionFontsDirectory()
+        )}[outv]`
       : `${overlay}[outv]`
   );
 
@@ -422,7 +424,7 @@ function createAssCaptions(
   timedWords: WhisperWord[]
 ): string {
   const end = formatAssTime(duration);
-  const safeHook = escapeAssText(hook).slice(0, 220);
+  const safeHook = formatAssText(truncateGraphemes(hook, 140), "Hook");
   const captionEvents =
     timedWords.length > 0
       ? createTimedWordCaptionEvents(timedWords, duration)
@@ -436,8 +438,8 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Hook,Arial,72,&H00FFFFFF,&H000000FF,&H00000000,&HAA000000,1,0,0,0,100,100,0,0,1,4,2,8,70,70,120,1
-Style: Caption,Arial,64,&H00FFFFFF,&H000000FF,&H00000000,&H7A000000,1,0,0,0,100,100,0,0,1,6,3,2,96,96,230,1
+Style: Hook,Noto Sans,72,&H00FFFFFF,&H000000FF,&H00000000,&HAA000000,1,0,0,0,100,100,0,0,1,4,2,8,70,70,120,1
+Style: Caption,Noto Sans,64,&H00FFFFFF,&H000000FF,&H00000000,&H7A000000,1,0,0,0,100,100,0,0,1,6,3,2,96,96,230,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -458,7 +460,7 @@ function createTimedWordCaptionEvents(words: WhisperWord[], duration: number): s
       );
       const safeEnd = Math.max(start + 0.12, end - 0.03);
       const text = buildCaptionWindow(
-        group.map((item) => escapeAssText(item.word)),
+        group.map((item) => formatAssText(item.word, "Caption")),
         index
       );
       return `Dialogue: 0,${formatAssTime(start)},${formatAssTime(safeEnd)},Caption,,0,0,0,,${text}`;
@@ -512,6 +514,7 @@ function createEstimatedWordCaptionEvents(subtitles: string, duration: number): 
     .split(" ")
     .map((word) => word.trim())
     .filter(Boolean)
+    .map((word) => formatAssText(word, "Caption"))
     .slice(0, 160);
 
   if (words.length === 0) {
@@ -565,6 +568,46 @@ function escapeAssText(value: string): string {
   return value.replace(/[{}]/g, "").replace(/\r?\n/g, " ").replace(/\s+/g, " ").trim();
 }
 
+function formatAssText(value: string, styleName: "Hook" | "Caption"): string {
+  const normalized = escapeAssText(value);
+  const segments = new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(normalized);
+
+  return Array.from(segments, ({ segment }) =>
+    isEmojiGrapheme(segment)
+      ? `{\\fnNoto Emoji}${segment}{\\r${styleName}}`
+      : segment
+  ).join("");
+}
+
+function isEmojiGrapheme(value: string): boolean {
+  return (
+    /\p{Extended_Pictographic}/u.test(value) ||
+    /[\u{1F1E6}-\u{1F1FF}]/u.test(value) ||
+    value.includes("\u20E3")
+  );
+}
+
 function escapeFilterPath(path: string): string {
   return path.replace(/\\/g, "\\\\").replace(/:/g, "\\:").replace(/'/g, "\\'");
+}
+
+function getCaptionFontsDirectory(): string {
+  return join(process.cwd(), "assets", "fonts");
+}
+
+function truncateGraphemes(value: string, maxLength: number): string {
+  const segments = new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(value);
+  let result = "";
+  let count = 0;
+
+  for (const { segment } of segments) {
+    if (count >= maxLength) {
+      break;
+    }
+
+    result += segment;
+    count += 1;
+  }
+
+  return result;
 }

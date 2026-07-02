@@ -190,6 +190,10 @@ Caption rendering groups words by Whisper segment, pauses, punctuation, and
 short maximum line length. It keeps captions to one short line at a time to
 avoid overlapping phrases and uncontrolled wrapping.
 
+Caption and hook rendering bundles OFL-licensed Noto Sans and Noto Emoji fonts.
+Emoji graphemes are preserved and rendered as monochrome symbols by FFmpeg/libass
+instead of missing-glyph squares.
+
 Some YouTube URLs may block local MP4 export with a bot/authentication check.
 For a reliable production flow, add one of these ingestion paths:
 
