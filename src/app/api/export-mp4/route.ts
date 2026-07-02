@@ -21,9 +21,9 @@ const exportRequestSchema = z.object({
     id: z.string(),
     startTime: z.number().min(0),
     endTime: z.number().min(0),
-    hook: z.string().min(1),
-    subtitles: z.string().min(1),
-    title: z.string().min(1),
+    hook: z.string().max(500),
+    subtitles: z.string().max(20_000),
+    title: z.string().max(500),
     transcriptionContext: z.string().max(500).default("")
   })
 });

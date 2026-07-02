@@ -470,8 +470,8 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Hook,Noto Sans,72,&H00FFFFFF,&H000000FF,&H00000000,&HAA000000,1,0,0,0,100,100,0,0,1,4,2,8,70,70,120,1
-Style: Caption,Noto Sans,64,&H00FFFFFF,&H000000FF,&H00000000,&H7A000000,1,0,0,0,100,100,0,0,1,6,3,2,96,96,230,1
+Style: Hook,Noto Sans,84,&H00FFFFFF,&H000000FF,&H00000000,&HAA000000,1,0,0,0,100,100,0,0,1,4,2,8,70,70,360,1
+Style: Caption,Noto Sans,64,&H00FFFFFF,&H000000FF,&H00000000,&H7A000000,1,0,0,0,100,100,0,0,1,6,3,2,96,96,380,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -682,6 +682,7 @@ function truncateGraphemes(value: string, maxLength: number): string {
 }
 
 function calculateHookFontSize(hook: string): number {
+  const baseFontSize = 84;
   const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
   const longestLine = Math.max(
     1,
@@ -690,5 +691,5 @@ function calculateHookFontSize(hook: string): number {
       .map((line) => Array.from(segmenter.segment(line.trim())).length)
   );
 
-  return Math.max(44, Math.min(72, Math.floor((72 * 32) / longestLine)));
+  return Math.max(52, Math.min(baseFontSize, Math.floor((baseFontSize * 32) / longestLine)));
 }
