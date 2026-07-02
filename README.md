@@ -111,6 +111,7 @@ The repository now includes a minimal Vercel-ready Next.js POC.
 - Preview the selected timestamp in an embedded YouTube player.
 - Download a local MP4 export for each clip.
 - Choose per clip whether the export includes the hook and spoken captions.
+- Add explicit line breaks to hooks and edit names/specialist terms used by Whisper.
 - Transcribe the selected clip audio with Whisper for spoken subtitles.
 - Burn progressive word-by-word captions into local MP4 exports.
 - Fill vertical exports with a blurred video background instead of black bars.
@@ -182,6 +183,11 @@ puts downloads, usually the user's `Downloads` folder.
 Word-by-word captions use Whisper word timestamps when speech is detected in the
 clip. If Whisper fails or finds no words, the renderer falls back to estimated
 timing from the generated subtitle text and clip duration.
+
+Local transcription defaults to Whisper `small` for better speech accuracy.
+The **Names & terms** field is passed as spelling context for player names,
+brands, places, acronyms, and domain vocabulary. Set `WHISPER_MODEL` or
+`WHISPER_LANGUAGE` in `.env` to override the defaults.
 
 Disable **Include hook & captions** on a clip to skip Whisper and export the
 vertical video without any burned-in text. The blurred background remains active.

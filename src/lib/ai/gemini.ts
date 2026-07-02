@@ -282,6 +282,9 @@ function normalizeGeminiClips(parsed: unknown): ClipCandidate[] {
     const title = String(value.title ?? `Clip ${index + 1}`);
     const hook = String(value.hook ?? title);
     const subtitles = String(value.subtitles ?? value.description ?? hook);
+    const transcriptionContext = String(
+      value.transcriptionContext ?? `${title}, ${hook}`
+    ).slice(0, 500);
     const description = String(value.description ?? value.reason ?? hook);
     const reason = String(value.reason ?? "Gemini selected this moment as a candidate clip.");
     const hashtags = Array.isArray(value.hashtags) ? value.hashtags : [];
@@ -292,6 +295,7 @@ function normalizeGeminiClips(parsed: unknown): ClipCandidate[] {
       endTime,
       hook,
       subtitles,
+      transcriptionContext,
       reason,
       score: Number(value.score ?? 75),
       title,

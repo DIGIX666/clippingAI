@@ -22,7 +22,9 @@ const exportRequestSchema = z.object({
     startTime: z.number().min(0),
     endTime: z.number().min(0),
     hook: z.string().min(1),
-    subtitles: z.string().min(1)
+    subtitles: z.string().min(1),
+    title: z.string().min(1),
+    transcriptionContext: z.string().max(500).default("")
   })
 });
 
@@ -35,6 +37,8 @@ export async function POST(request: Request) {
       endTime: body.clip.endTime,
       hook: body.clip.hook,
       subtitles: body.clip.subtitles,
+      title: body.clip.title,
+      transcriptionContext: body.clip.transcriptionContext,
       includeCaptions: body.includeCaptions
     });
 

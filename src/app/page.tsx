@@ -746,7 +746,8 @@ export default function Home() {
 
                     <label>
                       Hook
-                      <input
+                      <textarea
+                        className="hook-input"
                         value={clip.hook}
                         onChange={(event) => updateClip(clip.id, { hook: event.target.value })}
                       />
@@ -758,6 +759,16 @@ export default function Home() {
                         value={clip.subtitles}
                         onChange={(event) =>
                           updateClip(clip.id, { subtitles: event.target.value })
+                        }
+                      />
+                    </label>
+
+                    <label>
+                      Names & terms
+                      <input
+                        value={clip.transcriptionContext ?? ""}
+                        onChange={(event) =>
+                          updateClip(clip.id, { transcriptionContext: event.target.value })
                         }
                       />
                     </label>
