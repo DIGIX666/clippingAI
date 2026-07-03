@@ -32,6 +32,7 @@ JSON shape:
       "endTime": 58,
       "hook": "A strong opening hook for the clip",
       "subtitles": "Clean subtitle text for the selected clip",
+      "transcriptionContext": "Comma-separated proper nouns, speaker names, brands, places, and specialist terms heard or visible in this clip",
       "reason": "Why this moment is worth clipping",
       "score": 87,
       "title": "Short social title",
@@ -47,10 +48,18 @@ ${transcript}
 }
 
 export function buildYouTubeVideoAnalysisPrompt(video: VideoMetadata): string {
+  return buildVideoAnalysisPrompt(video, "YouTube video");
+}
+
+export function buildUploadedVideoAnalysisPrompt(video: VideoMetadata): string {
+  return buildVideoAnalysisPrompt(video, "uploaded MP4");
+}
+
+function buildVideoAnalysisPrompt(video: VideoMetadata, sourceLabel: string): string {
   return `
 You are an expert short-form video editor.
 
-Analyze this YouTube video directly from its audio and visual content. Propose the strongest short clips for TikTok, Instagram Reels, and YouTube Shorts.
+Analyze this ${sourceLabel} directly from its audio and visual content. Propose the strongest short clips for TikTok, Instagram Reels, and YouTube Shorts.
 
 Video:
 - Title: ${video.title}
@@ -77,6 +86,7 @@ JSON shape:
       "endTime": 58,
       "hook": "A strong opening hook for the clip",
       "subtitles": "Clean subtitle or on-screen caption text for the selected clip",
+      "transcriptionContext": "Comma-separated proper nouns, speaker names, brands, places, and specialist terms heard or visible in this clip",
       "reason": "Why this moment is worth clipping",
       "score": 87,
       "title": "Short social title",

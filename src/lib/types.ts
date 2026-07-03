@@ -19,6 +19,7 @@ export const clipSchema = z.object({
   endTime: z.number().min(0),
   hook: z.string().min(1),
   subtitles: z.string().min(1),
+  transcriptionContext: z.string().max(500).default(""),
   reason: z.string().min(1),
   score: z.number().min(0).max(100),
   title: z.string().min(1),
@@ -40,7 +41,7 @@ export type ClipCandidate = z.infer<typeof clipSchema>;
 export type AnalyzeResponse = z.infer<typeof analyzeResponseSchema>;
 
 export type ApiAnalyzeResponse = AnalyzeResponse & {
-  analysisMode?: "transcript" | "youtube-video";
+  analysisMode?: "transcript" | "youtube-video" | "uploaded-video";
   transcriptPreview?: TranscriptSegment[];
   transcriptSegmentCount?: number;
   warning?: string;

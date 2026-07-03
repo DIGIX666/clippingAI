@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { AnalyzeJob, ApiAnalyzeResponse, ClipCandidate } from "@/lib/types";
 import { extractYouTubeVideoId, formatTimestamp } from "@/lib/youtube";
 
@@ -23,10 +23,18 @@ type AnalyzeJobResponse = {
   job: AnalyzeJob;
 };
 
+type InputMode = "youtube" | "upload";
+
+type UploadedSource = {
+  sourceId: string;
+  fileName: string;
+  size: number;
+};
+
 const idleProgress: ProgressState = {
   value: 0,
   label: "Ready",
-  detail: "Paste a YouTube URL to start analysis."
+  detail: "Add a YouTube URL or an MP4 file to start analysis."
 };
 
 async function readJsonResponse<T>(response: Response, fallbackMessage: string): Promise<T> {
@@ -105,8 +113,35 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
+function readVideoDuration(file: File): Promise<number | undefined> {
+  return new Promise((resolve) => {
+    const objectUrl = URL.createObjectURL(file);
+    const video = document.createElement("video");
+
+    const finish = (duration?: number) => {
+      URL.revokeObjectURL(objectUrl);
+      video.removeAttribute("src");
+      video.load();
+      resolve(duration);
+    };
+
+    video.preload = "metadata";
+    video.onloadedmetadata = () => {
+      finish(Number.isFinite(video.duration) ? video.duration : undefined);
+    };
+    video.onerror = () => {
+      finish();
+    };
+    video.src = objectUrl;
+  });
+}
+
 export default function Home() {
+  const [inputMode, setInputMode] = useState<InputMode>("youtube");
   const [url, setUrl] = useState("");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [localPreviewUrl, setLocalPreviewUrl] = useState("");
+  const [uploadedSource, setUploadedSource] = useState<UploadedSource | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<ApiAnalyzeResponse | null>(null);
@@ -114,9 +149,12 @@ export default function Home() {
   const [editableClips, setEditableClips] = useState<ClipCandidate[]>([]);
   const [progress, setProgress] = useState<ProgressState>(idleProgress);
   const [renderProgress, setRenderProgress] = useState<RenderProgressState | null>(null);
+  const [captionPreferences, setCaptionPreferences] = useState<Record<string, boolean>>({});
+  const localPreviewUrlRef = useRef("");
 
   const activeClip = editableClips.find((clip) => clip.id === activeClipId) ?? editableClips[0];
-  const videoId = result?.video.videoId ?? extractYouTubeVideoId(url);
+  const videoId =
+    inputMode === "youtube" ? result?.video.videoId ?? extractYouTubeVideoId(url) : null;
 
   const embedUrl = useMemo(() => {
     if (!videoId) {
@@ -127,6 +165,23 @@ export default function Home() {
     return `https://www.youtube.com/embed/${videoId}?start=${start}&autoplay=0&rel=0`;
   }, [activeClip, videoId]);
 
+  const localVideoUrl = useMemo(() => {
+    if (!localPreviewUrl) {
+      return "";
+    }
+
+    const start = activeClip ? Math.max(0, activeClip.startTime) : 0;
+    return `${localPreviewUrl}#t=${start}`;
+  }, [activeClip, localPreviewUrl]);
+
+  useEffect(() => {
+    return () => {
+      if (localPreviewUrlRef.current) {
+        URL.revokeObjectURL(localPreviewUrlRef.current);
+      }
+    };
+  }, []);
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setIsLoading(true);
@@ -134,6 +189,13 @@ export default function Home() {
     setResult(null);
     setEditableClips([]);
     setActiveClipId(null);
+    setCaptionPreferences({});
+
+    if (inputMode === "upload") {
+      await analyzeUploadedFile();
+      return;
+    }
+
     setProgress({
       value: 2,
       label: "Queueing analysis",
@@ -162,9 +224,7 @@ export default function Home() {
       });
 
       const analysis = await pollAnalyzeJob(created.jobId);
-      setResult(analysis);
-      setEditableClips(analysis.clips);
-      setActiveClipId(analysis.clips[0]?.id ?? null);
+      applyAnalysis(analysis);
     } catch (caught) {
       setProgress({
         value: 100,
@@ -175,6 +235,132 @@ export default function Home() {
     } finally {
       setIsLoading(false);
     }
+  }
+
+  async function analyzeUploadedFile() {
+    if (!selectedFile) {
+      setIsLoading(false);
+      setProgress(idleProgress);
+      setError("Select an MP4 file before starting analysis.");
+      return;
+    }
+
+    setUploadedSource(null);
+    setProgress({
+      value: 8,
+      label: "Uploading MP4",
+      detail: "Saving the source video in temporary local storage."
+    });
+
+    const progressTimers: number[] = [];
+
+    try {
+      const durationSeconds = await readVideoDuration(selectedFile);
+      const formData = new FormData();
+      formData.append("file", selectedFile);
+      const uploadResponse = await fetch("/api/uploads", {
+        method: "POST",
+        body: formData
+      });
+      const uploaded = await readJsonResponse<UploadedSource>(
+        uploadResponse,
+        "MP4 upload failed."
+      );
+      setUploadedSource(uploaded);
+      setProgress({
+        value: 34,
+        label: "Processing video",
+        detail: "Gemini is preparing the uploaded audio and video for analysis."
+      });
+
+      progressTimers.push(
+        window.setTimeout(() => {
+          setProgress({
+            value: 54,
+            label: "Analyzing moments",
+            detail: "Gemini is identifying strong 30-60 second clip candidates."
+          });
+        }, 5000),
+        window.setTimeout(() => {
+          setProgress({
+            value: 76,
+            label: "Building clip candidates",
+            detail: "Generating hooks, subtitles, titles, and social metadata."
+          });
+        }, 15000)
+      );
+
+      const analyzeResponse = await fetch("/api/analyze-upload", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          sourceId: uploaded.sourceId,
+          durationSeconds
+        })
+      });
+      const analysis = await readJsonResponse<ApiAnalyzeResponse>(
+        analyzeResponse,
+        "Uploaded MP4 analysis failed."
+      );
+      applyAnalysis(analysis);
+      setProgress({
+        value: 100,
+        label: "Analysis complete",
+        detail: `${analysis.clips.length} clip candidates are ready to edit and export.`
+      });
+    } catch (caught) {
+      setProgress({
+        value: 100,
+        label: "Analysis failed",
+        detail: "Check the error message and retry the MP4 upload."
+      });
+      setError(caught instanceof Error ? caught.message : "Uploaded MP4 analysis failed.");
+    } finally {
+      progressTimers.forEach(window.clearTimeout);
+      setIsLoading(false);
+    }
+  }
+
+  function applyAnalysis(analysis: ApiAnalyzeResponse) {
+    setResult(analysis);
+    setEditableClips(analysis.clips);
+    setActiveClipId(analysis.clips[0]?.id ?? null);
+    setCaptionPreferences(
+      Object.fromEntries(analysis.clips.map((clip) => [clip.id, true]))
+    );
+  }
+
+  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0] ?? null;
+
+    if (localPreviewUrlRef.current) {
+      URL.revokeObjectURL(localPreviewUrlRef.current);
+    }
+
+    const objectUrl = file ? URL.createObjectURL(file) : "";
+    localPreviewUrlRef.current = objectUrl;
+    setLocalPreviewUrl(objectUrl);
+    setSelectedFile(file);
+    setUploadedSource(null);
+    setResult(null);
+    setEditableClips([]);
+    setActiveClipId(null);
+    setCaptionPreferences({});
+    setError("");
+    setProgress(idleProgress);
+  }
+
+  function changeInputMode(mode: InputMode) {
+    setInputMode(mode);
+    setResult(null);
+    setEditableClips([]);
+    setActiveClipId(null);
+    setUploadedSource(null);
+    setCaptionPreferences({});
+    setError("");
+    setProgress(idleProgress);
   }
 
   async function pollAnalyzeJob(jobId: string): Promise<ApiAnalyzeResponse> {
@@ -271,12 +457,27 @@ export default function Home() {
       return;
     }
 
+    const includeCaptions = captionPreferences[clip.id] ?? true;
+    const source =
+      result.analysisMode === "uploaded-video" && uploadedSource
+        ? {
+            type: "upload" as const,
+            sourceId: uploadedSource.sourceId
+          }
+        : {
+            type: "youtube" as const,
+            url: `https://www.youtube.com/watch?v=${result.video.videoId}`
+          };
+
     setError("");
     setRenderProgress({
       clipId: clip.id,
       value: 10,
       label: "Preparing MP4 export",
-      detail: "Starting yt-dlp and FFmpeg for this clip."
+      detail:
+        source.type === "upload"
+          ? "Opening the uploaded MP4 with FFmpeg."
+          : "Starting yt-dlp and FFmpeg for this clip."
     });
 
     const renderTimers = [
@@ -284,16 +485,21 @@ export default function Home() {
         setRenderProgress({
           clipId: clip.id,
           value: 28,
-          label: "Downloading clip section",
-          detail: "Fetching only the selected YouTube section locally with yt-dlp."
+          label: source.type === "upload" ? "Cutting clip section" : "Downloading clip section",
+          detail:
+            source.type === "upload"
+              ? "Extracting the selected section from the uploaded MP4."
+              : "Fetching only the selected YouTube section locally with yt-dlp."
         });
       }, 900),
       window.setTimeout(() => {
         setRenderProgress({
           clipId: clip.id,
           value: 48,
-          label: "Transcribing speech",
-          detail: "Whisper is listening to the clip and extracting word-level timestamps."
+          label: includeCaptions ? "Transcribing speech" : "Preparing clean export",
+          detail: includeCaptions
+            ? "Whisper is listening to the clip and extracting word-level timestamps."
+            : "Hook and spoken captions are disabled for this export."
         });
       }, 4500),
       window.setTimeout(() => {
@@ -301,8 +507,9 @@ export default function Home() {
           clipId: clip.id,
           value: 66,
           label: "Rendering vertical MP4",
-          detail:
-            "FFmpeg is fitting the clip to 1080x1920 and burning synced word-by-word captions."
+          detail: includeCaptions
+            ? "FFmpeg is fitting the clip to 1080x1920 and burning synced word-by-word captions."
+            : "FFmpeg is fitting the clean clip to 1080x1920 without text overlays."
         });
       }, 10000),
       window.setTimeout(() => {
@@ -322,8 +529,9 @@ export default function Home() {
           "content-type": "application/json"
         },
         body: JSON.stringify({
-          youtubeUrl: `https://www.youtube.com/watch?v=${result.video.videoId}`,
-          clip
+          source,
+          clip,
+          includeCaptions
         })
       });
 
@@ -341,7 +549,9 @@ export default function Home() {
       const downloadUrl = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = downloadUrl;
-      link.download = `${result.video.videoId}-${clip.id}.mp4`;
+      link.download = `${result.video.videoId}-${clip.id}${
+        includeCaptions ? "-captioned" : "-clean"
+      }.mp4`;
       link.click();
       URL.revokeObjectURL(downloadUrl);
       setRenderProgress({
@@ -372,28 +582,61 @@ export default function Home() {
         <header className="topbar">
           <div className="brand">
             <h1>clippingAI POC</h1>
-            <p>Paste a YouTube URL, generate clip candidates, edit hooks and subtitles.</p>
+            <p>Add a YouTube URL or MP4, generate clips, then edit and export.</p>
           </div>
           <div className="status-pill">Provider: Gemini</div>
         </header>
 
-        <section className="input-band" aria-label="Analyze a YouTube URL">
+        <section className="input-band" aria-label="Add a video source">
+          <div className="source-tabs" aria-label="Video source" role="tablist">
+            <button
+              aria-selected={inputMode === "youtube"}
+              className={inputMode === "youtube" ? "active" : ""}
+              onClick={() => changeInputMode("youtube")}
+              role="tab"
+              type="button"
+            >
+              YouTube URL
+            </button>
+            <button
+              aria-selected={inputMode === "upload"}
+              className={inputMode === "upload" ? "active" : ""}
+              onClick={() => changeInputMode("upload")}
+              role="tab"
+              type="button"
+            >
+              Upload MP4
+            </button>
+          </div>
           <form className="url-form" onSubmit={handleSubmit}>
-            <input
-              className="url-input"
-              placeholder="https://www.youtube.com/watch?v=..."
-              type="url"
-              value={url}
-              onChange={(event) => setUrl(event.target.value)}
-            />
-            <button className="primary-button" disabled={isLoading} type="submit">
+            {inputMode === "youtube" ? (
+              <input
+                className="url-input"
+                placeholder="https://www.youtube.com/watch?v=..."
+                required
+                type="url"
+                value={url}
+                onChange={(event) => setUrl(event.target.value)}
+              />
+            ) : (
+              <label className="file-input">
+                <span>{selectedFile?.name ?? "Choose an MP4 file"}</span>
+                <input accept="video/mp4,.mp4" onChange={handleFileChange} type="file" />
+              </label>
+            )}
+            <button
+              className="primary-button"
+              disabled={isLoading || (inputMode === "upload" && !selectedFile)}
+              type="submit"
+            >
               {isLoading ? "Analyzing..." : "Analyze"}
             </button>
           </form>
           <p className="input-note">
-            This POC starts an async analysis job, uses public YouTube captions when available,
-            then falls back to Gemini video analysis for videos without captions. MP4 export uses
-            Whisper + FFmpeg for spoken captions.
+            {inputMode === "youtube"
+              ? "YouTube analysis uses public captions when available, then Gemini video analysis as a fallback."
+              : "The MP4 stays in temporary local storage for clipping and is sent to Gemini for video analysis."}{" "}
+            Export uses Whisper + FFmpeg when hook and captions are enabled.
           </p>
           {(isLoading || result || error) && (
             <div className="progress-panel" aria-live="polite">
@@ -424,7 +667,11 @@ export default function Home() {
             </div>
 
             <div className="video-frame">
-              {embedUrl ? (
+              {inputMode === "upload" && localVideoUrl ? (
+                <video controls key={localVideoUrl} preload="metadata" src={localVideoUrl}>
+                  <track kind="captions" />
+                </video>
+              ) : embedUrl ? (
                 <iframe
                   key={embedUrl}
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
@@ -433,7 +680,11 @@ export default function Home() {
                   title="YouTube preview"
                 />
               ) : (
-                <div className="empty-preview">Paste a YouTube URL to preview the video.</div>
+                <div className="empty-preview">
+                  {inputMode === "upload"
+                    ? "Choose an MP4 file to preview it."
+                    : "Paste a YouTube URL to preview the video."}
+                </div>
               )}
             </div>
 
@@ -445,6 +696,8 @@ export default function Home() {
                     {result.video.author ? `${result.video.author} · ` : ""}
                     {result.analysisMode === "youtube-video"
                       ? "Gemini direct video analysis"
+                      : result.analysisMode === "uploaded-video"
+                        ? "Gemini uploaded video analysis"
                       : `${result.transcriptSegmentCount ?? 0} transcript segments found`}
                   </p>
                   {result.warning ? <p>{result.warning}</p> : null}
@@ -493,7 +746,8 @@ export default function Home() {
 
                     <label>
                       Hook
-                      <input
+                      <textarea
+                        className="hook-input"
                         value={clip.hook}
                         onChange={(event) => updateClip(clip.id, { hook: event.target.value })}
                       />
@@ -510,6 +764,16 @@ export default function Home() {
                     </label>
 
                     <label>
+                      Names & terms
+                      <input
+                        value={clip.transcriptionContext ?? ""}
+                        onChange={(event) =>
+                          updateClip(clip.id, { transcriptionContext: event.target.value })
+                        }
+                      />
+                    </label>
+
+                    <label>
                       Title
                       <input
                         value={clip.title}
@@ -519,6 +783,23 @@ export default function Home() {
 
                     <p>{clip.reason}</p>
                     <p>{clip.hashtags.join(" ")}</p>
+
+                    <label className="caption-toggle">
+                      <input
+                        checked={captionPreferences[clip.id] ?? true}
+                        onChange={(event) =>
+                          setCaptionPreferences((preferences) => ({
+                            ...preferences,
+                            [clip.id]: event.target.checked
+                          }))
+                        }
+                        type="checkbox"
+                      />
+                      <span>
+                        <strong>Include hook & captions</strong>
+                        Burn the hook and synced spoken words into this MP4.
+                      </span>
+                    </label>
 
                     {renderProgress?.clipId === clip.id ? (
                       <div className="render-progress" aria-live="polite">

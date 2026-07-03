@@ -4,13 +4,27 @@ import { access, mkdtemp, readFile, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { delimiter, isAbsolute, join } from "path";
 import ffmpegStaticPath from "ffmpeg-static";
+import { getUploadedVideo } from "@/lib/uploaded-videos";
+
+export type VideoSource =
+  | {
+      type: "youtube";
+      url: string;
+    }
+  | {
+      type: "upload";
+      sourceId: string;
+    };
 
 type RenderClipInput = {
-  youtubeUrl: string;
+  source: VideoSource;
   startTime: number;
   endTime: number;
   hook: string;
   subtitles: string;
+  title: string;
+  transcriptionContext: string;
+  includeCaptions: boolean;
 };
 
 type WhisperWord = {
@@ -41,20 +55,28 @@ export async function renderClipToMp4(input: RenderClipInput): Promise<Buffer> {
   const outputPath = join(tempDir, "clip.mp4");
 
   try {
-    await downloadSourceVideo(
-      input.youtubeUrl,
+    await prepareSourceVideo(
+      input.source,
       sourcePath,
       input.startTime,
       input.endTime,
       tempDir
     );
-    await extractAudioForTranscription(sourcePath, audioPath);
-    const timedWords = await transcribeWords(audioPath, tempDir);
-    await writeFile(
-      assPath,
-      createAssCaptions(input.hook, input.subtitles, duration, timedWords),
-      "utf8"
-    );
+
+    if (input.includeCaptions) {
+      await extractAudioForTranscription(sourcePath, audioPath);
+      const transcriptionPrompt = buildTranscriptionPrompt(
+        input.title,
+        input.hook,
+        input.transcriptionContext
+      );
+      const timedWords = await transcribeWords(audioPath, tempDir, transcriptionPrompt);
+      await writeFile(
+        assPath,
+        createAssCaptions(input.hook, input.subtitles, duration, timedWords),
+        "utf8"
+      );
+    }
 
     await runFfmpeg([
       "-hide_banner",
@@ -65,7 +87,7 @@ export async function renderClipToMp4(input: RenderClipInput): Promise<Buffer> {
       "-t",
       String(duration),
       "-filter_complex",
-      createVerticalBlurFilter(assPath),
+      createVerticalBlurFilter(input.includeCaptions ? assPath : null),
       "-map",
       "[outv]",
       "-map",
@@ -92,13 +114,23 @@ export async function renderClipToMp4(input: RenderClipInput): Promise<Buffer> {
   }
 }
 
-function createVerticalBlurFilter(assPath: string): string {
-  return [
+function createVerticalBlurFilter(assPath: string | null): string {
+  const filters = [
     "[0:v]split=2[bgsrc][fgsrc]",
     "[bgsrc]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=28:2,eq=brightness=-0.08:saturation=0.85[bg]",
-    "[fgsrc]scale=1080:1920:force_original_aspect_ratio=decrease[fg]",
-    "[bg][fg]overlay=(W-w)/2:(H-h)/2,subtitles=" + escapeFilterPath(assPath) + "[outv]"
-  ].join(";");
+    "[fgsrc]scale=1080:1920:force_original_aspect_ratio=decrease[fg]"
+  ];
+  const overlay = "[bg][fg]overlay=(W-w)/2:(H-h)/2";
+
+  filters.push(
+    assPath
+      ? `${overlay},subtitles=${escapeFilterPath(assPath)}:fontsdir=${escapeFilterPath(
+          getCaptionFontsDirectory()
+        )}[outv]`
+      : `${overlay}[outv]`
+  );
+
+  return filters.join(";");
 }
 
 async function extractAudioForTranscription(sourcePath: string, audioPath: string): Promise<void> {
@@ -118,23 +150,42 @@ async function extractAudioForTranscription(sourcePath: string, audioPath: strin
   ]);
 }
 
-async function transcribeWords(audioPath: string, outputDir: string): Promise<WhisperWord[]> {
+async function transcribeWords(
+  audioPath: string,
+  outputDir: string,
+  initialPrompt: string
+): Promise<WhisperWord[]> {
   try {
-    await runProcess("whisper", [
+    const args = [
       audioPath,
       "--model",
-      process.env.WHISPER_MODEL ?? "base",
+      process.env.WHISPER_MODEL ?? "small",
       "--task",
       "transcribe",
       "--word_timestamps",
       "True",
+      "--condition_on_previous_text",
+      "False",
+      "--hallucination_silence_threshold",
+      "1.0",
       "--output_format",
       "json",
       "--output_dir",
       outputDir,
       "--verbose",
       "False"
-    ]);
+    ];
+    const language = process.env.WHISPER_LANGUAGE?.trim();
+
+    if (language) {
+      args.push("--language", language);
+    }
+
+    if (initialPrompt) {
+      args.push("--initial_prompt", initialPrompt, "--carry_initial_prompt", "True");
+    }
+
+    await runProcess("whisper", args);
 
     const transcriptPath = join(outputDir, "audio.json");
     const payload = JSON.parse(await readFile(transcriptPath, "utf8")) as WhisperJson;
@@ -225,6 +276,52 @@ async function downloadSourceVideo(
 
     throw error;
   }
+}
+
+async function prepareSourceVideo(
+  source: VideoSource,
+  outputPath: string,
+  startTime: number,
+  endTime: number,
+  tempDir: string
+): Promise<void> {
+  if (source.type === "youtube") {
+    await downloadSourceVideo(source.url, outputPath, startTime, endTime, tempDir);
+    return;
+  }
+
+  const uploadedVideo = await getUploadedVideo(source.sourceId);
+  const duration = Math.max(1, Math.min(120, endTime - startTime));
+
+  await runFfmpeg([
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-ss",
+    String(Math.max(0, startTime)),
+    "-i",
+    uploadedVideo.filePath,
+    "-t",
+    String(duration),
+    "-map",
+    "0:v:0",
+    "-map",
+    "0:a?",
+    "-c:v",
+    "libx264",
+    "-preset",
+    "ultrafast",
+    "-crf",
+    "18",
+    "-c:a",
+    "aac",
+    "-b:a",
+    "160k",
+    "-movflags",
+    "+faststart",
+    "-y",
+    outputPath
+  ]);
 }
 
 async function resolveYouTubeCookiesPath(tempDir: string): Promise<string | null> {
@@ -353,7 +450,13 @@ function createAssCaptions(
   timedWords: WhisperWord[]
 ): string {
   const end = formatAssTime(duration);
-  const safeHook = escapeAssText(hook).slice(0, 220);
+  const truncatedHook = truncateGraphemes(hook, 140);
+  const hookFontSize = calculateHookFontSize(truncatedHook);
+  const safeHook = `{\\fs${hookFontSize}}${formatAssText(
+    truncatedHook,
+    "Hook",
+    hookFontSize
+  )}`;
   const captionEvents =
     timedWords.length > 0
       ? createTimedWordCaptionEvents(timedWords, duration)
@@ -367,8 +470,8 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Hook,Arial,72,&H00FFFFFF,&H000000FF,&H00000000,&HAA000000,1,0,0,0,100,100,0,0,1,4,2,8,70,70,120,1
-Style: Caption,Arial,64,&H00FFFFFF,&H000000FF,&H00000000,&H7A000000,1,0,0,0,100,100,0,0,1,6,3,2,96,96,230,1
+Style: Hook,Noto Sans,84,&H00FFFFFF,&H000000FF,&H00000000,&HAA000000,1,0,0,0,100,100,0,0,1,4,2,8,70,70,360,1
+Style: Caption,Noto Sans,64,&H00FFFFFF,&H000000FF,&H00000000,&H7A000000,1,0,0,0,100,100,0,0,1,6,3,2,96,96,380,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -389,7 +492,7 @@ function createTimedWordCaptionEvents(words: WhisperWord[], duration: number): s
       );
       const safeEnd = Math.max(start + 0.12, end - 0.03);
       const text = buildCaptionWindow(
-        group.map((item) => escapeAssText(item.word)),
+        group.map((item) => formatAssText(item.word, "Caption")),
         index
       );
       return `Dialogue: 0,${formatAssTime(start)},${formatAssTime(safeEnd)},Caption,,0,0,0,,${text}`;
@@ -443,6 +546,7 @@ function createEstimatedWordCaptionEvents(subtitles: string, duration: number): 
     .split(" ")
     .map((word) => word.trim())
     .filter(Boolean)
+    .map((word) => formatAssText(word, "Caption"))
     .slice(0, 160);
 
   if (words.length === 0) {
@@ -496,6 +600,96 @@ function escapeAssText(value: string): string {
   return value.replace(/[{}]/g, "").replace(/\r?\n/g, " ").replace(/\s+/g, " ").trim();
 }
 
+function formatAssText(
+  value: string,
+  styleName: "Hook" | "Caption",
+  fontSize?: number
+): string {
+  return value
+    .replace(/[{}]/g, "")
+    .split(/\r?\n/)
+    .slice(0, 3)
+    .map((line) => formatAssLine(line, styleName, fontSize))
+    .join("\\N");
+}
+
+function formatAssLine(
+  value: string,
+  styleName: "Hook" | "Caption",
+  fontSize?: number
+): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  const segments = new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(normalized);
+  const styleReset = `{\\r${styleName}${fontSize ? `\\fs${fontSize}` : ""}}`;
+
+  return Array.from(segments, ({ segment }) =>
+    isEmojiGrapheme(segment)
+      ? `{\\fnNoto Emoji}${segment}${styleReset}`
+      : segment
+  ).join("");
+}
+
+function isEmojiGrapheme(value: string): boolean {
+  return (
+    /\p{Extended_Pictographic}/u.test(value) ||
+    /[\u{1F1E6}-\u{1F1FF}]/u.test(value) ||
+    value.includes("\u20E3")
+  );
+}
+
+function buildTranscriptionPrompt(title: string, hook: string, context: string): string {
+  const normalizedContext = context.replace(/\s+/g, " ").trim();
+  const topic = [title, hook]
+    .map((value) => value.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .join(". ");
+
+  return [
+    "Accurate speech transcription.",
+    normalizedContext
+      ? `Use these exact spellings only when they are spoken: ${normalizedContext}.`
+      : "",
+    topic ? `Clip topic: ${topic}.` : ""
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .slice(0, 500);
+}
+
 function escapeFilterPath(path: string): string {
   return path.replace(/\\/g, "\\\\").replace(/:/g, "\\:").replace(/'/g, "\\'");
+}
+
+function getCaptionFontsDirectory(): string {
+  return join(process.cwd(), "assets", "fonts");
+}
+
+function truncateGraphemes(value: string, maxLength: number): string {
+  const segments = new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(value);
+  let result = "";
+  let count = 0;
+
+  for (const { segment } of segments) {
+    if (count >= maxLength) {
+      break;
+    }
+
+    result += segment;
+    count += 1;
+  }
+
+  return result;
+}
+
+function calculateHookFontSize(hook: string): number {
+  const baseFontSize = 84;
+  const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+  const longestLine = Math.max(
+    1,
+    ...hook
+      .split(/\r?\n/)
+      .map((line) => Array.from(segmenter.segment(line.trim())).length)
+  );
+
+  return Math.max(52, Math.min(baseFontSize, Math.floor((baseFontSize * 32) / longestLine)));
 }

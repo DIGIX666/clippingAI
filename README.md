@@ -101,6 +101,7 @@ The repository now includes a minimal Vercel-ready Next.js POC.
 ### What Works
 
 - Paste a YouTube URL.
+- Upload a local MP4 as an alternative source.
 - Start an async analysis job and poll progress from the UI.
 - Fetch public YouTube captions when available.
 - Send the transcript to Gemini.
@@ -109,6 +110,8 @@ The repository now includes a minimal Vercel-ready Next.js POC.
 - Edit hooks, subtitles, and titles in the browser.
 - Preview the selected timestamp in an embedded YouTube player.
 - Download a local MP4 export for each clip.
+- Choose per clip whether the export includes the hook and spoken captions.
+- Add explicit line breaks to hooks and edit names/specialist terms used by Whisper.
 - Transcribe the selected clip audio with Whisper for spoken subtitles.
 - Burn progressive word-by-word captions into local MP4 exports.
 - Fill vertical exports with a blurred video background instead of black bars.
@@ -167,6 +170,12 @@ automatic speech transcription, and `ffmpeg` from your system path. This is not
 production-ready for Vercel serverless; a real deployment should move rendering
 to a worker service.
 
+Uploaded MP4 files are stored temporarily under the operating system temp
+directory (`clippingai-uploads`). Gemini Files API receives a temporary copy for
+analysis, while clipping and rendering continue to use the local source file.
+Gemini's copy is deleted after analysis. Re-upload the source if the operating
+system clears its temporary files or the local server moves to another machine.
+
 The generated MP4 is not saved in the repository or a database. The API returns
 the file directly to the browser, so it is saved wherever the browser normally
 puts downloads, usually the user's `Downloads` folder.
@@ -175,9 +184,21 @@ Word-by-word captions use Whisper word timestamps when speech is detected in the
 clip. If Whisper fails or finds no words, the renderer falls back to estimated
 timing from the generated subtitle text and clip duration.
 
+Local transcription defaults to Whisper `small` for better speech accuracy.
+The **Names & terms** field is passed as spelling context for player names,
+brands, places, acronyms, and domain vocabulary. Set `WHISPER_MODEL` or
+`WHISPER_LANGUAGE` in `.env` to override the defaults.
+
+Disable **Include hook & captions** on a clip to skip Whisper and export the
+vertical video without any burned-in text. The blurred background remains active.
+
 Caption rendering groups words by Whisper segment, pauses, punctuation, and
 short maximum line length. It keeps captions to one short line at a time to
 avoid overlapping phrases and uncontrolled wrapping.
+
+Caption and hook rendering bundles OFL-licensed Noto Sans and Noto Emoji fonts.
+Emoji graphemes are preserved and rendered as monochrome symbols by FFmpeg/libass
+instead of missing-glyph squares.
 
 Some YouTube URLs may block local MP4 export with a bot/authentication check.
 For a reliable production flow, add one of these ingestion paths:
